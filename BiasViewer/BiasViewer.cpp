@@ -11,10 +11,14 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include <assert.h>
 
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <DirectXMath.h>
+
+#include "desktopcapture.h"
+#include "CaptureManager.h"
 
 #pragma comment(lib, "d3d11.lib")
 
@@ -83,6 +87,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_BIASVIEWER));
 
+    // verify DLL
+    assert(getInt() == 5);
+
     HRESULT hr = S_OK;
 
     ID3D11Device* device;
@@ -133,52 +140,54 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         return hr;
     }
 
-    hr = device->QueryInterface<IDXGIDevice>(&dxgiDevice);
+    CaptureManager cm(device);
 
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to create DXGI Device" << std::endl;
-        return hr;
-    }
+    //hr = device->QueryInterface<IDXGIDevice>(&dxgiDevice);
 
-    //hr = DxgiDevice->GetParent(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&DxgiAdapter));
-    hr = dxgiDevice->GetParent(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&dxgiAdapter));
+    //if (!SUCCEEDED(hr))
+    //{
+    //    std::cerr << "Failed to create DXGI Device" << std::endl;
+    //    return hr;
+    //}
 
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to obtain DXGI Adapter" << std::endl;
-        return hr;
-    }
+    ////hr = DxgiDevice->GetParent(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&DxgiAdapter));
+    //hr = dxgiDevice->GetParent(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&dxgiAdapter));
 
-    hr = dxgiAdapter->GetParent(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(&dxgiFactory));
-    if (!SUCCEEDED(hr))
-    {
-        return hr;
-    }
+    //if (!SUCCEEDED(hr))
+    //{
+    //    std::cerr << "Failed to obtain DXGI Adapter" << std::endl;
+    //    return hr;
+    //}
 
-    hr = dxgiAdapter->EnumOutputs(0, &dxgiOutput);
+    //hr = dxgiAdapter->GetParent(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(&dxgiFactory));
+    //if (!SUCCEEDED(hr))
+    //{
+    //    return hr;
+    //}
 
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to obtain DXGI Output" << std::endl;
-        return hr;
-    }
+    //hr = dxgiAdapter->EnumOutputs(0, &dxgiOutput);
 
-    hr = dxgiOutput->QueryInterface<IDXGIOutput1>(&dxgiOutput1);
+    //if (!SUCCEEDED(hr))
+    //{
+    //    std::cerr << "Failed to obtain DXGI Output" << std::endl;
+    //    return hr;
+    //}
 
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to obtain DXGI Output 1" << std::endl;
-        return hr;
-    }
+    //hr = dxgiOutput->QueryInterface<IDXGIOutput1>(&dxgiOutput1);
 
-    hr = dxgiOutput1->DuplicateOutput(device, &duplication);
+    //if (!SUCCEEDED(hr))
+    //{
+    //    std::cerr << "Failed to obtain DXGI Output 1" << std::endl;
+    //    return hr;
+    //}
 
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to duplicate output" << std::endl;
-        return hr;
-    }
+    //hr = dxgiOutput1->DuplicateOutput(device, &duplication);
+
+    //if (!SUCCEEDED(hr))
+    //{
+    //    std::cerr << "Failed to duplicate output" << std::endl;
+    //    return hr;
+    //}
 
     HWND desktopWindow = GetDesktopWindow();
     RECT desktopRect;
@@ -382,7 +391,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         context->CopyResource(downsampleTextures[0], desktopSurfaceTexture);
 
 		context->CSSetShader(computeShader, nullptr, 0);
-        //for (auto filterTexture : downsampleTextures)
+
         UINT numDispatchX = 54;
         UINT numDispatchY = 23;
         for (size_t i = 0; i < downsampleTextures.size()-1; ++i)
