@@ -17,6 +17,8 @@
 #include <dxgi1_2.h>
 #include <DirectXMath.h>
 
+#include <ArduinoControl.h>
+
 #include "desktopcapture.h"
 #include "CaptureManager.h"
 
@@ -100,10 +102,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     IDXGIOutput* dxgiOutput;
     IDXGIOutput1* dxgiOutput1;
     IDXGIOutputDuplication* duplication;
-    ID3D11Texture2D* desktopSurfaceTexture;
+    ID3D11Texture2D* desktopSurfaceTexture = nullptr;
     IDXGISwapChain1* swapchain;
 
-    ID3D11RenderTargetView* renderTargetView;
+    ID3D11RenderTargetView* renderTargetView = nullptr;
     ID3D11SamplerState* samplerState;
     ID3D11VertexShader* vertexShader = nullptr;
     ID3D11PixelShader* pixelShader = nullptr;
@@ -114,6 +116,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     ID3D11Buffer* downsampleConstantBUffer = nullptr;
 
     std::vector<ID3D11Texture2D*> downsampleTextures;
+    ID3D11Texture2D* ledTexture;
+
+    std::vector<hvk::Color> ledColors;
+    ledColors.resize(5 * 8);
 
     D3D_FEATURE_LEVEL FeatureLevels[] =
     {
@@ -134,60 +140,21 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         &availableFeatureLevel, 
         &context);
 
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to create D3D11 Device and Context" << std::endl;
-        return hr;
-    }
+    assert(SUCCEEDED(hr));
 
-    CaptureManager cm(device);
+    hr = device->QueryInterface<IDXGIDevice>(&dxgiDevice);
+    assert(SUCCEEDED(hr));
 
-    //hr = device->QueryInterface<IDXGIDevice>(&dxgiDevice);
+    hr = dxgiDevice->GetAdapter(&dxgiAdapter);
+    assert(SUCCEEDED(hr));
 
-    //if (!SUCCEEDED(hr))
-    //{
-    //    std::cerr << "Failed to create DXGI Device" << std::endl;
-    //    return hr;
-    //}
+    dxgiAdapter->GetParent(__uuidof(IDXGIFactory), reinterpret_cast<void**>(&dxgiFactory));
 
-    ////hr = DxgiDevice->GetParent(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&DxgiAdapter));
-    //hr = dxgiDevice->GetParent(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&dxgiAdapter));
+    CaptureManager cm(device, dxgiAdapter);
 
-    //if (!SUCCEEDED(hr))
-    //{
-    //    std::cerr << "Failed to obtain DXGI Adapter" << std::endl;
-    //    return hr;
-    //}
-
-    //hr = dxgiAdapter->GetParent(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(&dxgiFactory));
-    //if (!SUCCEEDED(hr))
-    //{
-    //    return hr;
-    //}
-
-    //hr = dxgiAdapter->EnumOutputs(0, &dxgiOutput);
-
-    //if (!SUCCEEDED(hr))
-    //{
-    //    std::cerr << "Failed to obtain DXGI Output" << std::endl;
-    //    return hr;
-    //}
-
-    //hr = dxgiOutput->QueryInterface<IDXGIOutput1>(&dxgiOutput1);
-
-    //if (!SUCCEEDED(hr))
-    //{
-    //    std::cerr << "Failed to obtain DXGI Output 1" << std::endl;
-    //    return hr;
-    //}
-
-    //hr = dxgiOutput1->DuplicateOutput(device, &duplication);
-
-    //if (!SUCCEEDED(hr))
-    //{
-    //    std::cerr << "Failed to duplicate output" << std::endl;
-    //    return hr;
-    //}
+    // initialize Arduino Control
+    hvk::control::ArduinoController arduinoController;
+    arduinoController.Init();
 
     HWND desktopWindow = GetDesktopWindow();
     RECT desktopRect;
@@ -206,34 +173,55 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     uint8_t numFilters = 0;
     UINT dividedWidth = desktopWidth;
     UINT dividedHeight = desktopHeight;
-    for (uint8_t i = 1; (dividedWidth /= 8) >= 21; ++i)
+    for (uint8_t i = 1; (dividedWidth /= 8) >= 32; ++i)
     {
         numFilters = i;
     }
     // create with the number of downsample filters plus one for the full resolution
-    downsampleTextures.resize(numFilters + 1);
+    //downsampleTextures.resize(numFilters + 1);
+    downsampleTextures.resize(1);
 
     // prepare UAVs for filtering
     dividedWidth = desktopWidth;
+	D3D11_TEXTURE2D_DESC texDesc;
     for (auto& filterTexture : downsampleTextures)
     {
-		D3D11_TEXTURE2D_DESC texDesc;
 		texDesc.Width = dividedWidth;
 		texDesc.Height = dividedHeight;
 		texDesc.ArraySize = 1;
 		texDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 		texDesc.Usage = D3D11_USAGE_DEFAULT;
 		texDesc.CPUAccessFlags = 0;
-		texDesc.MipLevels = 1;
+		//texDesc.MipLevels = 1;
+		//texDesc.MipLevels = numFilters + 1;
+		texDesc.MipLevels = 6;
 		texDesc.SampleDesc.Count = 1;
 		texDesc.SampleDesc.Quality = 0;
 		texDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-		texDesc.MiscFlags = 0;
+		//texDesc.BindFlags = D3D11IND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+		//texDesc.MiscFlags = 0;
+		texDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
 		hr = device->CreateTexture2D(&texDesc, nullptr, &filterTexture);
+        assert(hr == S_OK);
 
         dividedWidth /= 8;
         dividedHeight /= 8;
+
+        // ensure power-of-two values to make LED processing easier
+        dividedWidth = std::pow(2, std::ceil(std::log(dividedWidth) / std::log(2)));
+        dividedHeight = std::pow(2, std::ceil(std::log(dividedHeight) / std::log(2)));
     }
+
+    // create staging texture for LED processing
+    texDesc.Width = 107;
+    texDesc.Height = 45;
+	texDesc.Usage = D3D11_USAGE_STAGING;
+	texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	texDesc.BindFlags = 0;
+    texDesc.MiscFlags = 0;
+    texDesc.MipLevels = 1;
+	hr = device->CreateTexture2D(&texDesc, nullptr, &ledTexture);
+    assert(hr == S_OK);
 
 
     DXGI_SWAP_CHAIN_DESC1 swapchainDesc;
@@ -356,18 +344,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 			}
         }
 
-		hr = duplication->AcquireNextFrame(INFINITE, &frameInfo, &displayResource);
-		if (!SUCCEEDED(hr))
-		{
-            std::cout << "Failed to acquire frame" << std::endl;
-		}
-
-		hr = displayResource->QueryInterface<ID3D11Texture2D>(&desktopSurfaceTexture);
-		if (!SUCCEEDED(hr))
-		{
-            std::cout << "Failed to get texture from frame resource" << std::endl;
-		}
-
+        if (desktopSurfaceTexture != nullptr)
+        {
+            desktopSurfaceTexture->Release();
+        }
+        hr = cm.AcquireFrameAsTexture(&desktopSurfaceTexture);
+        assert(SUCCEEDED(hr));
 
         D3D11_TEXTURE2D_DESC surfaceDesc;
         desktopSurfaceTexture->GetDesc(&surfaceDesc);
@@ -379,6 +361,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		{
 			return hr;
 		}
+        if (renderTargetView != nullptr)
+        {
+            renderTargetView->Release();
+        }
 		hr = device->CreateRenderTargetView(backbuffer, nullptr, &renderTargetView);
 		backbuffer->Release();
 		if (FAILED(hr))
@@ -388,72 +374,96 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		context->OMSetRenderTargets(1, &renderTargetView, nullptr);
 
         // copy the desktop surface to the texture we'll use for filtering
-        context->CopyResource(downsampleTextures[0], desktopSurfaceTexture);
+        //context->CopyResource(downsampleTextures[0], desktopSurfaceTexture);
+        context->CopySubresourceRegion(downsampleTextures[0], 0, 0, 0, 0, desktopSurfaceTexture, 0, nullptr);
+        D3D11_TEXTURE2D_DESC mipDesc;
+        downsampleTextures[0]->GetDesc(&mipDesc);
+		ID3D11ShaderResourceView* mipResourceView;
+		D3D11_SHADER_RESOURCE_VIEW_DESC mipViewDesc;
+		mipViewDesc.Format = mipDesc.Format;
+		mipViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		mipViewDesc.Texture2D.MostDetailedMip = 0;
+		mipViewDesc.Texture2D.MipLevels = mipDesc.MipLevels;
+		hr = device->CreateShaderResourceView(downsampleTextures[0], &mipViewDesc, &mipResourceView);
+        context->GenerateMips(mipResourceView);
 
 		context->CSSetShader(computeShader, nullptr, 0);
 
-        UINT numDispatchX = 54;
-        UINT numDispatchY = 23;
-        for (size_t i = 0; i < downsampleTextures.size()-1; ++i)
-        {
-            auto filterTexture = downsampleTextures[i];
-            auto filterTo = downsampleTextures[i + 1];
+        //UINT numDispatchX = 54;
+        //UINT numDispatchY = 23;
+        UINT numDispatchX = 0;
+        UINT numDispatchY = 0;
+   //     for (size_t i = 0; i < downsampleTextures.size()-1; ++i)
+   //     {
+   //         auto filterTexture = downsampleTextures[i];
+   //         auto filterTo = downsampleTextures[i + 1];
 
-			D3D11_TEXTURE2D_DESC filterToDesc;
-			filterTo->GetDesc(&filterToDesc);
+   //         D3D11_TEXTURE2D_DESC filterDesc;
+   //         filterTexture->GetDesc(&filterDesc);
 
-			D3D11_UNORDERED_ACCESS_VIEW_DESC filterUnorderedDesc;
-			filterUnorderedDesc.Format = filterToDesc.Format;
-			filterUnorderedDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-			filterUnorderedDesc.Texture2D.MipSlice = 0;
+			//D3D11_TEXTURE2D_DESC filterToDesc;
+   //         filterTo->GetDesc(&filterToDesc);
 
-			ID3D11UnorderedAccessView* filterView;
-			hr = device->CreateUnorderedAccessView(filterTo, &filterUnorderedDesc, &filterView);
+   //         numDispatchX = filterDesc.Width / 64;
+   //         numDispatchY = filterDesc.Height / 64;
 
-            D3D11_TEXTURE2D_DESC filterDesc;
-            filterTexture->GetDesc(&filterDesc);
-			D3D11_SHADER_RESOURCE_VIEW_DESC filterShaderDesc;
-			filterShaderDesc.Format = filterDesc.Format;
-			filterShaderDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-			filterShaderDesc.Texture2D.MostDetailedMip = filterDesc.MipLevels - 1;
-			filterShaderDesc.Texture2D.MipLevels = filterDesc.MipLevels;
+			//D3D11_UNORDERED_ACCESS_VIEW_DESC filterUnorderedDesc;
+			//filterUnorderedDesc.Format = filterToDesc.Format;
+			//filterUnorderedDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+			//filterUnorderedDesc.Texture2D.MipSlice = 0;
 
-			ID3D11ShaderResourceView* filterShaderResource;
-            hr = device->CreateShaderResourceView(filterTexture, &filterShaderDesc, &filterShaderResource);
+			//ID3D11UnorderedAccessView* filterView;
+			//hr = device->CreateUnorderedAccessView(filterTo, &filterUnorderedDesc, &filterView);
 
-            // create dispatch constant
-            DownsampleConstantBuffer db = { numDispatchX, numDispatchY };
-            D3D11_BUFFER_DESC dbDesc;
-            dbDesc.ByteWidth = static_cast<UINT>(std::max(sizeof(DownsampleConstantBuffer), (size_t)16));
-            dbDesc.Usage = D3D11_USAGE_DYNAMIC;
-            dbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-            dbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-            dbDesc.MiscFlags = 0;
-            dbDesc.StructureByteStride = 0;
+			//D3D11_SHADER_RESOURCE_VIEW_DESC filterShaderDesc;
+			//filterShaderDesc.Format = filterDesc.Format;
+			//filterShaderDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			//filterShaderDesc.Texture2D.MostDetailedMip = filterDesc.MipLevels - 1;
+			//filterShaderDesc.Texture2D.MipLevels = filterDesc.MipLevels;
 
-            D3D11_SUBRESOURCE_DATA dbData;
-            dbData.pSysMem = &db;
-            dbData.SysMemPitch = 0;
-            dbData.SysMemSlicePitch = 0;
+			//ID3D11ShaderResourceView* filterShaderResource;
+   //         hr = device->CreateShaderResourceView(filterTexture, &filterShaderDesc, &filterShaderResource);
 
-            hr = device->CreateBuffer(&dbDesc, &dbData, &downsampleConstantBUffer);
-            context->CSSetConstantBuffers(0, 1, &downsampleConstantBUffer);
+   //         // create dispatch constant
+   //         //DownsampleConstantBuffer db = { numDispatchX, numDispatchY };
+   //         DownsampleConstantBuffer db = { filterDesc.Width / filterToDesc.Width, filterDesc.Height / filterToDesc.Height };
+   //         D3D11_BUFFER_DESC dbDesc;
+   //         dbDesc.ByteWidth = static_cast<UINT>(std::max(sizeof(DownsampleConstantBuffer), (size_t)16));
+   //         dbDesc.Usage = D3D11_USAGE_DYNAMIC;
+   //         dbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+   //         dbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+   //         dbDesc.MiscFlags = 0;
+   //         dbDesc.StructureByteStride = 0;
 
-			// filter desktop image through compute shader
-			context->CSSetUnorderedAccessViews(0, 1, &filterView, nullptr);
-            context->CSSetShaderResources(0, 1, &filterShaderResource);
-			//context->Dispatch(430, 180, 1);
-			context->Dispatch(numDispatchX, numDispatchY, 1);
-			context->CSSetUnorderedAccessViews(0, 1, kNullUAV, nullptr);
-            context->CSSetShaderResources(0, 1, kNullSRV);
+   //         D3D11_SUBRESOURCE_DATA dbData;
+   //         dbData.pSysMem = &db;
+   //         dbData.SysMemPitch = 0;
+   //         dbData.SysMemSlicePitch = 0;
 
-            numDispatchX /= 2;
-            numDispatchY /= 2;
+   //         hr = device->CreateBuffer(&dbDesc, &dbData, &downsampleConstantBUffer);
+   //         context->CSSetConstantBuffers(0, 1, &downsampleConstantBUffer);
 
-        }
+			//// filter desktop image through compute shader
+			//context->CSSetUnorderedAccessViews(0, 1, &filterView, nullptr);
+   //         context->CSSetShaderResources(0, 1, &filterShaderResource);
+			////context->Dispatch(430, 180, 1);
+			//context->Dispatch(numDispatchX, numDispatchY, 1);
+			//context->CSSetUnorderedAccessViews(0, 1, kNullUAV, nullptr);
+   //         context->CSSetShaderResources(0, 1, kNullSRV);
+
+   //         //numDispatchX /= 2;
+   //         //numDispatchY /= 2;
+
+   //         filterShaderResource->Release();
+   //         filterView->Release();
+   //         downsampleConstantBUffer->Release();
+
+   //     }
 		// clear compute shader context
 		context->CSSetShader(nullptr, nullptr, 0);
 
+        // copy the lowest resolution downsample texture to the LED staging texture
+        context->CopySubresourceRegion(ledTexture, 0, 0, 0, 0, downsampleTextures[downsampleTextures.size() - 1], 5, nullptr);
 
         D3D11_TEXTURE2D_DESC filterDesc;
         downsampleTextures[downsampleTextures.size() - 1]->GetDesc(&filterDesc);
@@ -462,7 +472,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         //shaderDesc.Format = surfaceDesc.Format;
         shaderDesc.Format = filterDesc.Format;
         shaderDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-        shaderDesc.Texture2D.MostDetailedMip = filterDesc.MipLevels - 1;
+        //shaderDesc.Texture2D.MostDetailedMip = filterDesc.MipLevels - 1;
+        shaderDesc.Texture2D.MostDetailedMip = 0;
         shaderDesc.Texture2D.MipLevels = filterDesc.MipLevels;
 
         ID3D11ShaderResourceView* shaderResource;
@@ -478,9 +489,122 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
         context->PSSetShaderResources(0, 1, kNullSRV);
 
-        duplication->ReleaseFrame();
+        //duplication->ReleaseFrame();
 
         hr = swapchain->Present(1, 0);
+        shaderResource->Release();
+
+        // map the LED staging texture for CPU read
+        D3D11_MAPPED_SUBRESOURCE mappedLEDData;
+        ZeroMemory(&mappedLEDData, sizeof(D3D11_MAPPED_SUBRESOURCE));
+        context->Map(ledTexture, 0, D3D11_MAP_READ, 0, &mappedLEDData);
+
+        // calculate LED colors
+
+        const uint32_t numComponents = 4;   // pixels in BGRA
+        const uint32_t pixelsPerRow = 107;
+        const uint32_t pixelsPerCol = 45;
+        const uint32_t numXBuckets = 8;
+        const uint32_t numYBuckets = 5;
+        const uint32_t bucketWidth = pixelsPerRow / numXBuckets + 1;
+        const uint32_t xRemainder = numXBuckets * bucketWidth - pixelsPerRow;
+        const uint32_t bucketHeight = pixelsPerCol / numYBuckets + 1;
+        const uint32_t yRemainder = numYBuckets * bucketHeight - pixelsPerCol;
+
+        for (size_t i = 0; i < numYBuckets; ++i)
+        {
+            uint8_t destYOffset = i * numXBuckets;
+            uint32_t yOffset = i * bucketHeight;
+            if (i < yRemainder)
+            {
+                yOffset -= i;
+            }
+            for (size_t j = 0; j < numXBuckets; ++j)
+            {
+                uint8_t destXOffset = j;
+                uint32_t xOffset = j * bucketWidth;
+                if (j < xRemainder)
+                {
+                    xOffset -= j;
+                }
+
+                // now traverse the neighborhood of this bucket
+                uint32_t aR = 0;
+                uint32_t aG = 0;
+                uint32_t aB = 0;
+                for (size_t nY = 0; nY < bucketHeight; ++nY)
+                {
+                    uint32_t pixelY = yOffset + nY;
+                    uint32_t scanOffset = pixelY * pixelsPerRow;
+                    for (size_t nX = 0; nX < bucketWidth; ++nX)
+                    {
+                        uint32_t pixelX = xOffset + nX;
+                        uint32_t pixelOffset = (scanOffset + pixelX) * numComponents;
+                        aB += *(reinterpret_cast<uint8_t*>(mappedLEDData.pData) + pixelOffset);
+                        aG += *(reinterpret_cast<uint8_t*>(mappedLEDData.pData) + pixelOffset + 1);
+                        aR += *(reinterpret_cast<uint8_t*>(mappedLEDData.pData) + pixelOffset + 2);
+                    }
+                }
+                aR = std::max((uint8_t)(aR / (bucketHeight * bucketWidth)), (uint8_t)1);
+                aG = std::max((uint8_t)(aG / (bucketHeight * bucketWidth)), (uint8_t)1);
+                aB = std::max((uint8_t)(aB / (bucketHeight * bucketWidth)), (uint8_t)1);
+
+                ledColors[destYOffset + destXOffset] = { (uint8_t)aR, (uint8_t)aG, (uint8_t)aB };
+            }
+        }
+
+  //      const uint32_t numPixelsPerBucket = 
+
+  //      const uint8_t consumeX = std::ceil(53 / 8);
+  //      const uint8_t consumeY = std::ceil(22 / 8);
+		//uint8_t* dataAddress = reinterpret_cast<uint8_t*>(mappedLEDData.pData);
+  //      for (size_t i = 0; i < 5; ++i)
+  //      {
+  //          uint8_t yStart = i * 22 / 5;
+  //          for (size_t j = 0; j < 8; ++j)
+  //          {
+  //              //uint8_t xStart = j * 53 / 8;
+  //              //auto& thisLEDColor = ledColors[i * 8 + j];
+  //              //size_t lookup = (yStart * 53) + (xStart * 22) * 4;
+  //              //uint8_t* offset = reinterpret_cast<uint8_t*>(mappedLEDData.pData) + lookup;
+  //              //thisLEDColor.b = std::max(*offset, (uint8_t)1);
+  //              //thisLEDColor.g = std::max(*(offset + 1), (uint8_t)1);
+  //              //thisLEDColor.r = std::max(*(offset + 2), (uint8_t)1);
+
+
+  //              uint32_t newRed = 0;
+  //              uint32_t newGreen = 0;
+  //              uint32_t newBlue = 0;
+  //              uint32_t baseOffset = i * 8 * (consumeX * consumeY) * 4;
+  //              for (uint8_t k = 0; k < consumeY; ++k)
+  //              {
+  //                  for (uint8_t l = 0; l < consumeX; ++l)
+  //                  {
+  //                      uint32_t offset = (baseOffset + (k * consumeX) + l) * 4;
+  //                      newBlue += *(dataAddress + offset);
+  //                      newGreen += *(dataAddress + offset + 1);
+  //                      newRed += *(dataAddress + offset + 2);
+  //                  }
+  //              }
+  //              newRed /= (consumeX * consumeY);
+  //              newGreen /= (consumeX * consumeY);
+  //              newBlue /= (consumeX * consumeY);
+
+  //              //ledColors[i * 8 + j] = 
+  //              //{ 
+  //              //    std::max((uint8_t)newRed, (uint8_t)1), 
+  //              //    std::max((uint8_t)newGreen, (uint8_t)1), 
+  //              //    std::max((uint8_t)newBlue, (uint8_t)1) 
+  //              //};
+  //              ledColors[i * 8 + j] = { 255, 1, 1 };
+  //          }
+  //      }
+
+  //      arduinoController.WritePixels(ledColors);
+
+        arduinoController.WritePixels(ledColors);
+        context->Unmap(ledTexture, 0);
+		Sleep(32);
     }
 
     return (int) msg.wParam;

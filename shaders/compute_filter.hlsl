@@ -1,6 +1,7 @@
 Texture2D<unorm float4> filterFrom : register(t0);
 RWTexture2D<unorm float4> filterTo : register(u0);
 
+// TODO: remove this, unused
 cbuffer DispatchDimensions : register(b0)
 {
 	uint dispatchX;
@@ -10,8 +11,6 @@ cbuffer DispatchDimensions : register(b0)
 [numthreads(8, 8, 1)]
 void main( uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID, uint3 Gid : SV_GroupID )
 {
-	float4 threadColor = float4(normalize(float3(DTid.x, DTid.y, DTid.z)), 1);
-
 	uint pixelsInNeighborhood = 0;
 	float4 neighborhood = float4(0, 0, 0, 0);
 	for (uint i = 0; i < 8; ++i)
@@ -26,6 +25,7 @@ void main( uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID, uint
 
 	neighborhood = neighborhood / pixelsInNeighborhood;
 
-	uint2 writeAt = uint2(Gid.x * 8 + GTid.x, Gid.y * 8 + GTid.y);
+	//uint2 writeAt = uint2(Gid.x * 8 + GTid.x, Gid.y * 8 + GTid.y);
+	uint2 writeAt = uint2(Gid.x * dispatchX + GTid.x, Gid.y * dispatchY + GTid.y);
 	filterTo[writeAt] = neighborhood;
 }
