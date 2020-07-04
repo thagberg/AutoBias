@@ -9,6 +9,6 @@ struct PS_INPUT
 
 float4 main(PS_INPUT input) : SV_TARGET
 {
-	float4 color = tx.Sample(sampleLinear, input.Tex);
+	float4 color = tx.SampleLevel(sampleLinear, input.Tex, 20);
 	return color;
 }

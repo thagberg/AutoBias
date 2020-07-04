@@ -12,6 +12,7 @@
 #include <limits>
 #include <algorithm>
 #include <assert.h>
+#include <array>
 
 #include <d3d11.h>
 #include <dxgi1_2.h>
@@ -38,12 +39,6 @@ LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
 const uint8_t kNumVertices = 6;
-
-struct DownsampleConstantBuffer
-{
-    uint32_t dispatchX;
-    uint32_t dispatchY;
-};
 
 struct Vertex
 {
@@ -89,9 +84,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_BIASVIEWER));
 
-    // verify DLL
-    assert(getInt() == 5);
-
     HRESULT hr = S_OK;
 
     ID3D11Device* device;
@@ -112,14 +104,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     ID3D11InputLayout* inputLayout;
     ID3D11Buffer* vertexBuffer;
 
-    ID3D11ComputeShader* computeShader = nullptr;
-    ID3D11Buffer* downsampleConstantBUffer = nullptr;
-
-    std::vector<ID3D11Texture2D*> downsampleTextures;
+    ID3D11Texture2D* downsampleTexture;
     ID3D11Texture2D* ledTexture;
+    ID3D11Texture2D* ledToRenderTexture;
 
-    std::vector<hvk::Color> ledColors;
-    ledColors.resize(5 * 8);
+    std::array<hvk::Color, 8*5> ledColors;
 
     D3D_FEATURE_LEVEL FeatureLevels[] =
     {
@@ -148,12 +137,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     hr = dxgiDevice->GetAdapter(&dxgiAdapter);
     assert(SUCCEEDED(hr));
 
-    dxgiAdapter->GetParent(__uuidof(IDXGIFactory), reinterpret_cast<void**>(&dxgiFactory));
+    hr = dxgiAdapter->GetParent(__uuidof(IDXGIFactory), reinterpret_cast<void**>(&dxgiFactory));
+    assert(SUCCEEDED(hr));
 
-    CaptureManager cm(device, dxgiAdapter);
+    CaptureManager cm;
+    hr = cm.Init(device, dxgiAdapter);
+    assert(hr == S_OK);
 
     // initialize Arduino Control
-    hvk::control::ArduinoController arduinoController;
+    hvk::control::ArduinoController<8, 5> arduinoController;
     arduinoController.Init();
 
     HWND desktopWindow = GetDesktopWindow();
@@ -168,49 +160,21 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UINT windowWidth = windowRect.right - windowRect.left;
     UINT windowHeight = windowRect.bottom - windowRect.top;
 
-    // calculate number of downsample textures to use
-    //uint8_t numFilters = ceil(max(std::log(desktopWidth) / std::log(8), std::log(desktopHeight) / std::log(8)));
-    uint8_t numFilters = 0;
-    UINT dividedWidth = desktopWidth;
-    UINT dividedHeight = desktopHeight;
-    for (uint8_t i = 1; (dividedWidth /= 8) >= 32; ++i)
-    {
-        numFilters = i;
-    }
-    // create with the number of downsample filters plus one for the full resolution
-    //downsampleTextures.resize(numFilters + 1);
-    downsampleTextures.resize(1);
-
     // prepare UAVs for filtering
-    dividedWidth = desktopWidth;
 	D3D11_TEXTURE2D_DESC texDesc;
-    for (auto& filterTexture : downsampleTextures)
-    {
-		texDesc.Width = dividedWidth;
-		texDesc.Height = dividedHeight;
-		texDesc.ArraySize = 1;
-		texDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-		texDesc.Usage = D3D11_USAGE_DEFAULT;
-		texDesc.CPUAccessFlags = 0;
-		//texDesc.MipLevels = 1;
-		//texDesc.MipLevels = numFilters + 1;
-		texDesc.MipLevels = 6;
-		texDesc.SampleDesc.Count = 1;
-		texDesc.SampleDesc.Quality = 0;
-		texDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-		//texDesc.BindFlags = D3D11IND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-		//texDesc.MiscFlags = 0;
-		texDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
-		hr = device->CreateTexture2D(&texDesc, nullptr, &filterTexture);
-        assert(hr == S_OK);
-
-        dividedWidth /= 8;
-        dividedHeight /= 8;
-
-        // ensure power-of-two values to make LED processing easier
-        dividedWidth = std::pow(2, std::ceil(std::log(dividedWidth) / std::log(2)));
-        dividedHeight = std::pow(2, std::ceil(std::log(dividedHeight) / std::log(2)));
-    }
+	texDesc.Width = desktopWidth;
+	texDesc.Height = desktopHeight;
+	texDesc.ArraySize = 1;
+	texDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	texDesc.Usage = D3D11_USAGE_DEFAULT;
+	texDesc.CPUAccessFlags = 0;
+	texDesc.MipLevels = 7;
+	texDesc.SampleDesc.Count = 1;
+	texDesc.SampleDesc.Quality = 0;
+	texDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+	texDesc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+	hr = device->CreateTexture2D(&texDesc, nullptr, &downsampleTexture);
+	assert(hr == S_OK);
 
     // create staging texture for LED processing
     texDesc.Width = 107;
@@ -223,6 +187,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	hr = device->CreateTexture2D(&texDesc, nullptr, &ledTexture);
     assert(hr == S_OK);
 
+    // create staging texture for copying LED data back to GPU 
+    texDesc.Width = 8;
+    texDesc.Height = 5;
+	texDesc.Usage = D3D11_USAGE_DEFAULT;
+	texDesc.CPUAccessFlags = 0;
+	texDesc.BindFlags = 0;
+    texDesc.MiscFlags = 0;
+    texDesc.MipLevels = 1;
+    texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	hr = device->CreateTexture2D(&texDesc, nullptr, &ledToRenderTexture);
+    assert(hr == S_OK);
 
     DXGI_SWAP_CHAIN_DESC1 swapchainDesc;
     RtlZeroMemory(&swapchainDesc, sizeof(swapchainDesc));
@@ -235,10 +210,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     swapchainDesc.SampleDesc.Count = 1;
     swapchainDesc.SampleDesc.Quality = 0;
     hr = dxgiFactory->CreateSwapChainForHwnd(device, window, &swapchainDesc, nullptr, nullptr, &swapchain);
-    if (FAILED(hr))
-    {
-        return hr;
-    }
+    assert(SUCCEEDED(hr));
 
 
     // prepare shaders
@@ -255,13 +227,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     HANDLE pixelByteCodeHandle = CreateFile2(L"shaders\\compiled\\pixel.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
     readSuccess = ReadFile(pixelByteCodeHandle, pixelByteCode.data(), 20000, &pixelBytesRead, nullptr);
     hr = device->CreatePixelShader(pixelByteCode.data(), pixelBytesRead, nullptr, &pixelShader);
-
-    DWORD computeBytesRead;
-    std::vector<char> computeByteCode;
-    computeByteCode.resize(30000);
-    HANDLE computeByteCodeHandle = CreateFile2(L"shaders\\compiled\\compute_filter.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
-    readSuccess = ReadFile(computeByteCodeHandle, computeByteCode.data(), 30000, &computeBytesRead, nullptr);
-    hr = device->CreateComputeShader(computeByteCode.data(), computeBytesRead, nullptr, &computeShader);
 
     D3D11_INPUT_ELEMENT_DESC vertexLayout[] =
     {
@@ -282,18 +247,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     sampleDesc.MinLOD = 0;
     sampleDesc.MaxLOD = D3D11_FLOAT32_MAX;
     hr = device->CreateSamplerState(&sampleDesc, &samplerState);
-    if (FAILED(hr))
-    {
-        return hr;
-    }
+    assert(SUCCEEDED(hr));
 
     // pre-prepare rendering pipeline
     FLOAT blendFactor[4] = { 0.f, 0.f, 0.f, 0.f };
     context->OMSetBlendState(nullptr, blendFactor, 0xffffffff);
-    //context->OMSetRenderTargets(1, &renderTargetView, nullptr);
     context->VSSetShader(vertexShader, nullptr, 0);
     context->PSSetShader(pixelShader, nullptr, 0);
-    //context->PSSetShaderResources(0, 1,)  // bind shader resource after obtaining surface capture
     context->PSSetSamplers(0, 1, &samplerState);
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -328,7 +288,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	DXGI_OUTDUPL_FRAME_INFO frameInfo;
     MSG msg;
 
-    // Main message loop:
+    // Main message loop
     while (true)
     {
         if (PeekMessage(&msg, window, 0, 0, PM_REMOVE))
@@ -349,7 +309,35 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             desktopSurfaceTexture->Release();
         }
         hr = cm.AcquireFrameAsTexture(&desktopSurfaceTexture);
-        assert(SUCCEEDED(hr));
+        // if we failed to acquire a frame, the desktop resolution or format could be changing, retry
+        if (!SUCCEEDED(hr))
+        {
+            uint8_t numRetries = 0;
+            while (numRetries < 10)
+            {
+                Sleep(100);
+				cm = CaptureManager();
+				hr = cm.Init(device, dxgiAdapter);
+                if (hr != S_OK)
+                {
+                    ++numRetries;
+                }
+                else
+                {
+					hr = cm.AcquireFrameAsTexture(&desktopSurfaceTexture);
+					if (!SUCCEEDED(hr))
+					{
+						++numRetries;
+					}
+					else
+					{
+						break;
+					}
+                }
+            }
+			assert(SUCCEEDED(hr));
+            continue;
+        }
 
         D3D11_TEXTURE2D_DESC surfaceDesc;
         desktopSurfaceTexture->GetDesc(&surfaceDesc);
@@ -374,125 +362,33 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		context->OMSetRenderTargets(1, &renderTargetView, nullptr);
 
         // copy the desktop surface to the texture we'll use for filtering
-        //context->CopyResource(downsampleTextures[0], desktopSurfaceTexture);
-        context->CopySubresourceRegion(downsampleTextures[0], 0, 0, 0, 0, desktopSurfaceTexture, 0, nullptr);
+        context->CopySubresourceRegion(downsampleTexture, 0, 0, 0, 0, desktopSurfaceTexture, 0, nullptr);
+
+        // surface has been copied, so we can now release the frame
+        desktopSurfaceTexture->Release();
+        cm.ReleaseFrame();
+
         D3D11_TEXTURE2D_DESC mipDesc;
-        downsampleTextures[0]->GetDesc(&mipDesc);
+        downsampleTexture->GetDesc(&mipDesc);
 		ID3D11ShaderResourceView* mipResourceView;
 		D3D11_SHADER_RESOURCE_VIEW_DESC mipViewDesc;
 		mipViewDesc.Format = mipDesc.Format;
 		mipViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 		mipViewDesc.Texture2D.MostDetailedMip = 0;
 		mipViewDesc.Texture2D.MipLevels = mipDesc.MipLevels;
-		hr = device->CreateShaderResourceView(downsampleTextures[0], &mipViewDesc, &mipResourceView);
+		hr = device->CreateShaderResourceView(downsampleTexture, &mipViewDesc, &mipResourceView);
         context->GenerateMips(mipResourceView);
 
-		context->CSSetShader(computeShader, nullptr, 0);
-
-        //UINT numDispatchX = 54;
-        //UINT numDispatchY = 23;
-        UINT numDispatchX = 0;
-        UINT numDispatchY = 0;
-   //     for (size_t i = 0; i < downsampleTextures.size()-1; ++i)
-   //     {
-   //         auto filterTexture = downsampleTextures[i];
-   //         auto filterTo = downsampleTextures[i + 1];
-
-   //         D3D11_TEXTURE2D_DESC filterDesc;
-   //         filterTexture->GetDesc(&filterDesc);
-
-			//D3D11_TEXTURE2D_DESC filterToDesc;
-   //         filterTo->GetDesc(&filterToDesc);
-
-   //         numDispatchX = filterDesc.Width / 64;
-   //         numDispatchY = filterDesc.Height / 64;
-
-			//D3D11_UNORDERED_ACCESS_VIEW_DESC filterUnorderedDesc;
-			//filterUnorderedDesc.Format = filterToDesc.Format;
-			//filterUnorderedDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-			//filterUnorderedDesc.Texture2D.MipSlice = 0;
-
-			//ID3D11UnorderedAccessView* filterView;
-			//hr = device->CreateUnorderedAccessView(filterTo, &filterUnorderedDesc, &filterView);
-
-			//D3D11_SHADER_RESOURCE_VIEW_DESC filterShaderDesc;
-			//filterShaderDesc.Format = filterDesc.Format;
-			//filterShaderDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-			//filterShaderDesc.Texture2D.MostDetailedMip = filterDesc.MipLevels - 1;
-			//filterShaderDesc.Texture2D.MipLevels = filterDesc.MipLevels;
-
-			//ID3D11ShaderResourceView* filterShaderResource;
-   //         hr = device->CreateShaderResourceView(filterTexture, &filterShaderDesc, &filterShaderResource);
-
-   //         // create dispatch constant
-   //         //DownsampleConstantBuffer db = { numDispatchX, numDispatchY };
-   //         DownsampleConstantBuffer db = { filterDesc.Width / filterToDesc.Width, filterDesc.Height / filterToDesc.Height };
-   //         D3D11_BUFFER_DESC dbDesc;
-   //         dbDesc.ByteWidth = static_cast<UINT>(std::max(sizeof(DownsampleConstantBuffer), (size_t)16));
-   //         dbDesc.Usage = D3D11_USAGE_DYNAMIC;
-   //         dbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-   //         dbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-   //         dbDesc.MiscFlags = 0;
-   //         dbDesc.StructureByteStride = 0;
-
-   //         D3D11_SUBRESOURCE_DATA dbData;
-   //         dbData.pSysMem = &db;
-   //         dbData.SysMemPitch = 0;
-   //         dbData.SysMemSlicePitch = 0;
-
-   //         hr = device->CreateBuffer(&dbDesc, &dbData, &downsampleConstantBUffer);
-   //         context->CSSetConstantBuffers(0, 1, &downsampleConstantBUffer);
-
-			//// filter desktop image through compute shader
-			//context->CSSetUnorderedAccessViews(0, 1, &filterView, nullptr);
-   //         context->CSSetShaderResources(0, 1, &filterShaderResource);
-			////context->Dispatch(430, 180, 1);
-			//context->Dispatch(numDispatchX, numDispatchY, 1);
-			//context->CSSetUnorderedAccessViews(0, 1, kNullUAV, nullptr);
-   //         context->CSSetShaderResources(0, 1, kNullSRV);
-
-   //         //numDispatchX /= 2;
-   //         //numDispatchY /= 2;
-
-   //         filterShaderResource->Release();
-   //         filterView->Release();
-   //         downsampleConstantBUffer->Release();
-
-   //     }
-		// clear compute shader context
-		context->CSSetShader(nullptr, nullptr, 0);
-
         // copy the lowest resolution downsample texture to the LED staging texture
-        context->CopySubresourceRegion(ledTexture, 0, 0, 0, 0, downsampleTextures[downsampleTextures.size() - 1], 5, nullptr);
+        context->CopySubresourceRegion(ledTexture, 0, 0, 0, 0, downsampleTexture, 5, nullptr);
 
         D3D11_TEXTURE2D_DESC filterDesc;
-        downsampleTextures[downsampleTextures.size() - 1]->GetDesc(&filterDesc);
-        //downsampleTextures[1]->GetDesc(&filterDesc);
+        downsampleTexture->GetDesc(&filterDesc);
         D3D11_SHADER_RESOURCE_VIEW_DESC shaderDesc;
-        //shaderDesc.Format = surfaceDesc.Format;
         shaderDesc.Format = filterDesc.Format;
         shaderDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-        //shaderDesc.Texture2D.MostDetailedMip = filterDesc.MipLevels - 1;
         shaderDesc.Texture2D.MostDetailedMip = 0;
-        shaderDesc.Texture2D.MipLevels = filterDesc.MipLevels;
-
-        ID3D11ShaderResourceView* shaderResource;
-        //hr = device->CreateShaderResourceView(desktopSurfaceTexture, &shaderDesc, &shaderResource);
-        hr = device->CreateShaderResourceView(downsampleTextures[downsampleTextures.size()-1], &shaderDesc, &shaderResource);
-        //hr = device->CreateShaderResourceView(downsampleTextures[1], &shaderDesc, &shaderResource);
-
-		//context->PSSetShaderResources(0, 1,)  // bind shader resource after obtaining surface capture
-        context->PSSetShaderResources(0, 1, &shaderResource);
-
-
-        context->Draw(kNumVertices, 0);
-
-        context->PSSetShaderResources(0, 1, kNullSRV);
-
-        //duplication->ReleaseFrame();
-
-        hr = swapchain->Present(1, 0);
-        shaderResource->Release();
+        shaderDesc.Texture2D.MipLevels = 1;
 
         // map the LED staging texture for CPU read
         D3D11_MAPPED_SUBRESOURCE mappedLEDData;
@@ -500,7 +396,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         context->Map(ledTexture, 0, D3D11_MAP_READ, 0, &mappedLEDData);
 
         // calculate LED colors
-
         const uint32_t numComponents = 4;   // pixels in BGRA
         const uint32_t pixelsPerRow = 107;
         const uint32_t pixelsPerCol = 45;
@@ -553,57 +448,33 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             }
         }
 
-  //      const uint32_t numPixelsPerBucket = 
+        std::vector<uint8_t> ledData;
+        ledData.resize(ledColors.size() * 4);
+        for (size_t i = 0; i < ledColors.size(); ++i)
+        {
+            ledData[i * 4] = ledColors[i].b;
+            ledData[i * 4 + 1] = ledColors[i].g;
+            ledData[i * 4 + 2] = ledColors[i].r;
+            ledData[i * 4 + 3] = 255;
+        }
 
-  //      const uint8_t consumeX = std::ceil(53 / 8);
-  //      const uint8_t consumeY = std::ceil(22 / 8);
-		//uint8_t* dataAddress = reinterpret_cast<uint8_t*>(mappedLEDData.pData);
-  //      for (size_t i = 0; i < 5; ++i)
-  //      {
-  //          uint8_t yStart = i * 22 / 5;
-  //          for (size_t j = 0; j < 8; ++j)
-  //          {
-  //              //uint8_t xStart = j * 53 / 8;
-  //              //auto& thisLEDColor = ledColors[i * 8 + j];
-  //              //size_t lookup = (yStart * 53) + (xStart * 22) * 4;
-  //              //uint8_t* offset = reinterpret_cast<uint8_t*>(mappedLEDData.pData) + lookup;
-  //              //thisLEDColor.b = std::max(*offset, (uint8_t)1);
-  //              //thisLEDColor.g = std::max(*(offset + 1), (uint8_t)1);
-  //              //thisLEDColor.r = std::max(*(offset + 2), (uint8_t)1);
-
-
-  //              uint32_t newRed = 0;
-  //              uint32_t newGreen = 0;
-  //              uint32_t newBlue = 0;
-  //              uint32_t baseOffset = i * 8 * (consumeX * consumeY) * 4;
-  //              for (uint8_t k = 0; k < consumeY; ++k)
-  //              {
-  //                  for (uint8_t l = 0; l < consumeX; ++l)
-  //                  {
-  //                      uint32_t offset = (baseOffset + (k * consumeX) + l) * 4;
-  //                      newBlue += *(dataAddress + offset);
-  //                      newGreen += *(dataAddress + offset + 1);
-  //                      newRed += *(dataAddress + offset + 2);
-  //                  }
-  //              }
-  //              newRed /= (consumeX * consumeY);
-  //              newGreen /= (consumeX * consumeY);
-  //              newBlue /= (consumeX * consumeY);
-
-  //              //ledColors[i * 8 + j] = 
-  //              //{ 
-  //              //    std::max((uint8_t)newRed, (uint8_t)1), 
-  //              //    std::max((uint8_t)newGreen, (uint8_t)1), 
-  //              //    std::max((uint8_t)newBlue, (uint8_t)1) 
-  //              //};
-  //              ledColors[i * 8 + j] = { 255, 1, 1 };
-  //          }
-  //      }
-
-  //      arduinoController.WritePixels(ledColors);
+        context->UpdateSubresource(ledToRenderTexture, 0, nullptr, ledData.data(), 4 * 8, 4 * 8 * 5);
 
         arduinoController.WritePixels(ledColors);
         context->Unmap(ledTexture, 0);
+
+        ID3D11ShaderResourceView* shaderResource;
+        hr = device->CreateShaderResourceView(ledToRenderTexture, &shaderDesc, &shaderResource);
+
+        context->PSSetShaderResources(0, 1, &shaderResource);
+
+
+        context->Draw(kNumVertices, 0);
+
+        context->PSSetShaderResources(0, 1, kNullSRV);
+
+        hr = swapchain->Present(1, 0);
+        shaderResource->Release();
 		Sleep(32);
     }
 
