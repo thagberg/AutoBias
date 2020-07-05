@@ -15,9 +15,15 @@ CaptureManager::CaptureManager()
 
 CaptureManager::~CaptureManager()
 {
-	//mDuplication->ReleaseFrame();
-	//mDuplication->Release();
-	//mDxgiOutput->Release();
+	if (mDuplication != nullptr)
+	{
+		mDuplication->ReleaseFrame();
+		mDuplication->Release();
+	}
+	if (mDxgiOutput != nullptr)
+	{
+		mDxgiOutput->Release();
+	}
 }
 
 HRESULT CaptureManager::Init(ID3D11Device* device, IDXGIAdapter* dxgiAdapter)

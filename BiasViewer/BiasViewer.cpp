@@ -38,7 +38,8 @@ BOOL                InitInstance(HINSTANCE, int, HWND& window);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
-const uint8_t kNumVertices = 6;
+const uint8_t kGridWidth = 8;
+const uint8_t kGridHeight = 5;
 
 struct Vertex
 {
@@ -46,6 +47,7 @@ struct Vertex
     DirectX::XMFLOAT2 TexCoord;
 };
 
+const uint8_t kNumVertices = 6;
 const Vertex kVertices[kNumVertices] =
 {
 	{DirectX::XMFLOAT3(-1.f, -1.f, 0.f), DirectX::XMFLOAT2(0.f, 1.f)},
@@ -91,9 +93,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     IDXGIDevice* dxgiDevice;
     IDXGIAdapter* dxgiAdapter;
     IDXGIFactory2* dxgiFactory;
-    IDXGIOutput* dxgiOutput;
-    IDXGIOutput1* dxgiOutput1;
-    IDXGIOutputDuplication* duplication;
     ID3D11Texture2D* desktopSurfaceTexture = nullptr;
     IDXGISwapChain1* swapchain;
 
@@ -145,7 +144,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     assert(hr == S_OK);
 
     // initialize Arduino Control
-    hvk::control::ArduinoController<8, 5> arduinoController;
+    hvk::control::ArduinoController<kGridWidth, kGridHeight> arduinoController;
     arduinoController.Init();
 
     HWND desktopWindow = GetDesktopWindow();
@@ -160,7 +159,23 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UINT windowWidth = windowRect.right - windowRect.left;
     UINT windowHeight = windowRect.bottom - windowRect.top;
 
-    // prepare UAVs for filtering
+    // Calculate number of mipmaps to generate on desktop texture
+    // we want one pixel "bucket" or "neighborhood" per LED
+    // buckets need to be at least 10x10 pixels for proper
+    // color importance sampling (TODO)
+    uint32_t numMips = 0;
+    {
+        const float bucketDimension = 10.f;
+        const uint32_t maxX = desktopWidth / kGridWidth;
+        const uint32_t maxY = desktopHeight / kGridHeight;
+        // "This is stupid, why do I need to pay attention in Algebra 2" -- Me, 14 years old
+        const uint32_t xMips = std::floor(log2(desktopWidth / (bucketDimension * log2(maxX))));
+        const uint32_t yMips = std::floor(log2(desktopHeight / (bucketDimension * log2(maxY))));
+		numMips = std::min(xMips, yMips);
+    }
+    assert(numMips > 1);
+
+    // prepare UAV texture
 	D3D11_TEXTURE2D_DESC texDesc;
 	texDesc.Width = desktopWidth;
 	texDesc.Height = desktopHeight;
@@ -168,7 +183,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	texDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 	texDesc.Usage = D3D11_USAGE_DEFAULT;
 	texDesc.CPUAccessFlags = 0;
-	texDesc.MipLevels = 7;
+	texDesc.MipLevels = numMips;
 	texDesc.SampleDesc.Count = 1;
 	texDesc.SampleDesc.Quality = 0;
 	texDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
@@ -177,8 +192,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	assert(hr == S_OK);
 
     // create staging texture for LED processing
-    texDesc.Width = 107;
-    texDesc.Height = 45;
+    // dimensions based on lowest desktop mipmap
+    texDesc.Width = desktopWidth >> (numMips-1);
+    texDesc.Height = desktopHeight >> (numMips-1);
 	texDesc.Usage = D3D11_USAGE_STAGING;
 	texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 	texDesc.BindFlags = 0;
@@ -188,8 +204,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     assert(hr == S_OK);
 
     // create staging texture for copying LED data back to GPU 
-    texDesc.Width = 8;
-    texDesc.Height = 5;
+    texDesc.Width = kGridWidth;
+    texDesc.Height = kGridHeight;
 	texDesc.Usage = D3D11_USAGE_DEFAULT;
 	texDesc.CPUAccessFlags = 0;
 	texDesc.BindFlags = 0;
@@ -284,13 +300,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     viewport.TopLeftY = 0;
     context->RSSetViewports(1, &viewport);
 
-	IDXGIResource* displayResource;
-	DXGI_OUTDUPL_FRAME_INFO frameInfo;
+    // Main loop
     MSG msg;
-
-    // Main message loop
     while (true)
     {
+        // process window messages
         if (PeekMessage(&msg, window, 0, 0, PM_REMOVE))
         {
             if (msg.message == WM_QUIT)
@@ -304,6 +318,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 			}
         }
 
+        // release previous frame's surface before acquiring the next
         if (desktopSurfaceTexture != nullptr)
         {
             desktopSurfaceTexture->Release();
@@ -339,10 +354,127 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             continue;
         }
 
-        D3D11_TEXTURE2D_DESC surfaceDesc;
-        desktopSurfaceTexture->GetDesc(&surfaceDesc);
+        // copy the desktop surface to the texture we'll use for filtering
+        context->CopySubresourceRegion(downsampleTexture, 0, 0, 0, 0, desktopSurfaceTexture, 0, nullptr);
 
-		// prepare framebuffer target
+        // surface has been copied, so we can now release the frame
+        desktopSurfaceTexture->Release();
+        cm.ReleaseFrame();
+
+        // create a resource view for the texture so that we can generate mip-maps
+        D3D11_TEXTURE2D_DESC mipDesc;
+        downsampleTexture->GetDesc(&mipDesc);
+		ID3D11ShaderResourceView* mipResourceView;
+		D3D11_SHADER_RESOURCE_VIEW_DESC mipViewDesc;
+		mipViewDesc.Format = mipDesc.Format;
+		mipViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		mipViewDesc.Texture2D.MostDetailedMip = 0;
+		mipViewDesc.Texture2D.MipLevels = mipDesc.MipLevels;
+		hr = device->CreateShaderResourceView(downsampleTexture, &mipViewDesc, &mipResourceView);
+        context->GenerateMips(mipResourceView);
+
+        // copy a low-resolution mipmap to the LED staging texture
+        context->CopySubresourceRegion(ledTexture, 0, 0, 0, 0, downsampleTexture, numMips-1, nullptr);
+        D3D11_TEXTURE2D_DESC ledDesc;
+        ledTexture->GetDesc(&ledDesc);
+
+        const uint32_t pixelsPerRow = ledDesc.Width;
+        const uint32_t pixelsPerCol = ledDesc.Height;
+        const uint32_t numXBuckets = kGridWidth;
+        const uint32_t numYBuckets = kGridHeight;
+        const uint32_t bucketWidth = std::ceil(static_cast<float>(pixelsPerRow) / numXBuckets);
+        const uint32_t xRemainder = numXBuckets * bucketWidth - pixelsPerRow;
+        const uint32_t bucketHeight = std::ceil(static_cast<float>(pixelsPerCol) / numYBuckets);
+        const uint32_t yRemainder = numYBuckets * bucketHeight - pixelsPerCol;
+
+        // create a texture for copying buckets into and mapping for CPU read
+		D3D11_MAPPED_SUBRESOURCE mappedBucketData;
+        ID3D11Texture2D* bucketTex;
+		D3D11_TEXTURE2D_DESC bucketDesc;
+		bucketDesc.Width = bucketWidth;
+		bucketDesc.Height = bucketHeight;
+        bucketDesc.ArraySize = 1;
+        bucketDesc.Format = ledDesc.Format;
+		bucketDesc.Usage = D3D11_USAGE_STAGING;
+		bucketDesc.CPUAccessFlags = D3D10_CPU_ACCESS_READ;
+		bucketDesc.MiscFlags = 0;
+		bucketDesc.MipLevels = 1;
+        bucketDesc.BindFlags = 0;
+		bucketDesc.SampleDesc.Count = 1;
+		bucketDesc.SampleDesc.Quality = 0;
+        hr = device->CreateTexture2D(&bucketDesc, nullptr, &bucketTex);
+        assert(hr == S_OK);
+
+        // this is probably a very inefficient way of doing this, but it's hard to get wrong this way
+        // copy each "bucket" into a new texture as a subresource region, then map it to CPU memory
+        // and traverse it linearly to calculate the neighborhood color
+        uint32_t yOffset = 0;
+        uint32_t xOffset = 0;
+        for (uint8_t i = 0; i < kGridHeight; ++i)
+        {
+            for (uint8_t j = 0; j < kGridWidth; ++j)
+            {
+                D3D11_BOX copyRegion;
+                copyRegion.top = yOffset;
+                copyRegion.left = xOffset;
+                copyRegion.right = xOffset + bucketWidth;
+                copyRegion.bottom = yOffset + bucketHeight;
+                copyRegion.front = 0;
+                copyRegion.back = 1;
+
+                context->CopySubresourceRegion(bucketTex, 0, 0, 0, 0, ledTexture, 0, &copyRegion);
+
+                ZeroMemory(&mappedBucketData, sizeof(D3D11_MAPPED_SUBRESOURCE));
+                context->Map(bucketTex, 0, D3D11_MAP_READ, 0, &mappedBucketData);
+
+                uint32_t aR = 0;
+                uint32_t aG = 0;
+                uint32_t aB = 0;
+                uint32_t pixelOffset = 0;
+                while (pixelOffset*4 < mappedBucketData.DepthPitch)
+                {
+                    aB += *(reinterpret_cast<uint8_t*>(mappedBucketData.pData) + pixelOffset);
+                    aG += *(reinterpret_cast<uint8_t*>(mappedBucketData.pData) + pixelOffset + 1);
+                    aR += *(reinterpret_cast<uint8_t*>(mappedBucketData.pData) + pixelOffset + 2);
+
+                    pixelOffset += 4;
+                }
+                ledColors[i * kGridWidth + j] = { 
+                    (uint8_t)(aR / (bucketWidth * bucketHeight)), 
+                    (uint8_t)(aG / (bucketWidth * bucketHeight)),
+                    (uint8_t)(aB / (bucketWidth * bucketHeight)) };
+
+                context->Unmap(bucketTex, 0);
+                xOffset += bucketWidth;
+                if (j < xRemainder)
+                {
+                    xOffset--;
+                }
+            }
+            xOffset = 0;
+            yOffset += bucketHeight;
+            if (i < yRemainder)
+            {
+                yOffset -= 1;
+            }
+        }
+
+        // write colors out to microcontroller
+        arduinoController.WritePixels(ledColors);
+
+        // write data to texture for the viewer app
+        std::vector<uint8_t> ledData;
+        ledData.resize(ledColors.size() * 4);
+        for (size_t i = 0; i < ledColors.size(); ++i)
+        {
+            ledData[i * 4] = ledColors[i].b;
+            ledData[i * 4 + 1] = ledColors[i].g;
+            ledData[i * 4 + 2] = ledColors[i].r;
+            ledData[i * 4 + 3] = 255;
+        }
+        context->UpdateSubresource(ledToRenderTexture, 0, nullptr, ledData.data(), 4 * 8, 4 * 8 * 5);
+
+		// prepare framebuffer for presentation
 		ID3D11Texture2D* backbuffer = nullptr;
 		hr = swapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backbuffer));
 		if (FAILED(hr))
@@ -361,27 +493,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		}
 		context->OMSetRenderTargets(1, &renderTargetView, nullptr);
 
-        // copy the desktop surface to the texture we'll use for filtering
-        context->CopySubresourceRegion(downsampleTexture, 0, 0, 0, 0, desktopSurfaceTexture, 0, nullptr);
-
-        // surface has been copied, so we can now release the frame
-        desktopSurfaceTexture->Release();
-        cm.ReleaseFrame();
-
-        D3D11_TEXTURE2D_DESC mipDesc;
-        downsampleTexture->GetDesc(&mipDesc);
-		ID3D11ShaderResourceView* mipResourceView;
-		D3D11_SHADER_RESOURCE_VIEW_DESC mipViewDesc;
-		mipViewDesc.Format = mipDesc.Format;
-		mipViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-		mipViewDesc.Texture2D.MostDetailedMip = 0;
-		mipViewDesc.Texture2D.MipLevels = mipDesc.MipLevels;
-		hr = device->CreateShaderResourceView(downsampleTexture, &mipViewDesc, &mipResourceView);
-        context->GenerateMips(mipResourceView);
-
-        // copy the lowest resolution downsample texture to the LED staging texture
-        context->CopySubresourceRegion(ledTexture, 0, 0, 0, 0, downsampleTexture, 5, nullptr);
-
+        // bind texture to shader
         D3D11_TEXTURE2D_DESC filterDesc;
         downsampleTexture->GetDesc(&filterDesc);
         D3D11_SHADER_RESOURCE_VIEW_DESC shaderDesc;
@@ -389,92 +501,19 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         shaderDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         shaderDesc.Texture2D.MostDetailedMip = 0;
         shaderDesc.Texture2D.MipLevels = 1;
-
-        // map the LED staging texture for CPU read
-        D3D11_MAPPED_SUBRESOURCE mappedLEDData;
-        ZeroMemory(&mappedLEDData, sizeof(D3D11_MAPPED_SUBRESOURCE));
-        context->Map(ledTexture, 0, D3D11_MAP_READ, 0, &mappedLEDData);
-
-        // calculate LED colors
-        const uint32_t numComponents = 4;   // pixels in BGRA
-        const uint32_t pixelsPerRow = 107;
-        const uint32_t pixelsPerCol = 45;
-        const uint32_t numXBuckets = 8;
-        const uint32_t numYBuckets = 5;
-        const uint32_t bucketWidth = pixelsPerRow / numXBuckets + 1;
-        const uint32_t xRemainder = numXBuckets * bucketWidth - pixelsPerRow;
-        const uint32_t bucketHeight = pixelsPerCol / numYBuckets + 1;
-        const uint32_t yRemainder = numYBuckets * bucketHeight - pixelsPerCol;
-
-        for (size_t i = 0; i < numYBuckets; ++i)
-        {
-            uint8_t destYOffset = i * numXBuckets;
-            uint32_t yOffset = i * bucketHeight;
-            if (i < yRemainder)
-            {
-                yOffset -= i;
-            }
-            for (size_t j = 0; j < numXBuckets; ++j)
-            {
-                uint8_t destXOffset = j;
-                uint32_t xOffset = j * bucketWidth;
-                if (j < xRemainder)
-                {
-                    xOffset -= j;
-                }
-
-                // now traverse the neighborhood of this bucket
-                uint32_t aR = 0;
-                uint32_t aG = 0;
-                uint32_t aB = 0;
-                for (size_t nY = 0; nY < bucketHeight; ++nY)
-                {
-                    uint32_t pixelY = yOffset + nY;
-                    uint32_t scanOffset = pixelY * pixelsPerRow;
-                    for (size_t nX = 0; nX < bucketWidth; ++nX)
-                    {
-                        uint32_t pixelX = xOffset + nX;
-                        uint32_t pixelOffset = (scanOffset + pixelX) * numComponents;
-                        aB += *(reinterpret_cast<uint8_t*>(mappedLEDData.pData) + pixelOffset);
-                        aG += *(reinterpret_cast<uint8_t*>(mappedLEDData.pData) + pixelOffset + 1);
-                        aR += *(reinterpret_cast<uint8_t*>(mappedLEDData.pData) + pixelOffset + 2);
-                    }
-                }
-                aR = std::max((uint8_t)(aR / (bucketHeight * bucketWidth)), (uint8_t)1);
-                aG = std::max((uint8_t)(aG / (bucketHeight * bucketWidth)), (uint8_t)1);
-                aB = std::max((uint8_t)(aB / (bucketHeight * bucketWidth)), (uint8_t)1);
-
-                ledColors[destYOffset + destXOffset] = { (uint8_t)aR, (uint8_t)aG, (uint8_t)aB };
-            }
-        }
-
-        std::vector<uint8_t> ledData;
-        ledData.resize(ledColors.size() * 4);
-        for (size_t i = 0; i < ledColors.size(); ++i)
-        {
-            ledData[i * 4] = ledColors[i].b;
-            ledData[i * 4 + 1] = ledColors[i].g;
-            ledData[i * 4 + 2] = ledColors[i].r;
-            ledData[i * 4 + 3] = 255;
-        }
-
-        context->UpdateSubresource(ledToRenderTexture, 0, nullptr, ledData.data(), 4 * 8, 4 * 8 * 5);
-
-        arduinoController.WritePixels(ledColors);
-        context->Unmap(ledTexture, 0);
-
         ID3D11ShaderResourceView* shaderResource;
         hr = device->CreateShaderResourceView(ledToRenderTexture, &shaderDesc, &shaderResource);
-
         context->PSSetShaderResources(0, 1, &shaderResource);
 
-
+        // draw the viewer
         context->Draw(kNumVertices, 0);
 
+        // null out shader resources to prepare for next frame
+        shaderResource->Release();
         context->PSSetShaderResources(0, 1, kNullSRV);
 
+
         hr = swapchain->Present(1, 0);
-        shaderResource->Release();
 		Sleep(32);
     }
 
