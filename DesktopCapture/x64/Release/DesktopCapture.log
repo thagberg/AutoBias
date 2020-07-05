@@ -1,9 +1,0 @@
-﻿  pch.cpp
-  CaptureManager.cpp
-  dllmain.cpp
-     Creating library C:\Users\timot\code\AutoBias\x64\Release\DesktopCapture.lib and object C:\Users\timot\code\AutoBias\x64\Release\DesktopCapture.exp
-  Generating code
-  Previous IPDB not found, fall back to full compilation.
-  All 6 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
-  Finished generating code
-  DesktopCapture.vcxproj -> C:\Users\timot\code\AutoBias\x64\Release\DesktopCapture.dll
