@@ -100,10 +100,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     ID3D11SamplerState* samplerState;
     ID3D11VertexShader* vertexShader = nullptr;
     ID3D11PixelShader* pixelShader = nullptr;
+    ID3D11ComputeShader* luminanceShader = nullptr;
     ID3D11InputLayout* inputLayout;
     ID3D11Buffer* vertexBuffer;
 
     ID3D11Texture2D* downsampleTexture;
+    ID3D11Texture2D* luminanceTexture;
     ID3D11Texture2D* ledTexture;
     ID3D11Texture2D* ledToRenderTexture;
 
@@ -174,6 +176,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		numMips = std::min(xMips, yMips);
     }
     assert(numMips > 1);
+    // create an extra mip for faster average luminance calcluation
+    numMips++;
 
     // prepare UAV texture
 	D3D11_TEXTURE2D_DESC texDesc;
@@ -193,8 +197,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     // create staging texture for LED processing
     // dimensions based on lowest desktop mipmap
-    texDesc.Width = desktopWidth >> (numMips-1);
-    texDesc.Height = desktopHeight >> (numMips-1);
+    texDesc.Width = desktopWidth >> (numMips-2);
+    texDesc.Height = desktopHeight >> (numMips-2);
 	texDesc.Usage = D3D11_USAGE_STAGING;
 	texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 	texDesc.BindFlags = 0;
@@ -215,6 +219,21 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	hr = device->CreateTexture2D(&texDesc, nullptr, &ledToRenderTexture);
     assert(hr == S_OK);
 
+    // create texture for holding average luminance values
+    texDesc.Width = desktopWidth >> (numMips - 1);
+    texDesc.Height = desktopHeight >> (numMips - 1);
+    texDesc.Format = DXGI_FORMAT_R8_UNORM;
+    texDesc.ArraySize = 1;
+    texDesc.Usage = D3D11_USAGE_DEFAULT;
+    texDesc.CPUAccessFlags = 0;
+    texDesc.MipLevels = 1;
+    texDesc.SampleDesc.Count = 1;
+    texDesc.SampleDesc.Quality = 0;
+    texDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+    texDesc.MiscFlags = 0;
+    hr = device->CreateTexture2D(&texDesc, nullptr, &luminanceTexture);
+    assert(hr == S_OK);
+
     DXGI_SWAP_CHAIN_DESC1 swapchainDesc;
     RtlZeroMemory(&swapchainDesc, sizeof(swapchainDesc));
     swapchainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
@@ -232,8 +251,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     // prepare shaders
 	std::vector<char> vertexByteCode;
 	std::vector<char> pixelByteCode;
+    std::vector<char> luminanceByteCode;
 	DWORD vertexBytesRead;
 	DWORD pixelBytesRead;
+    DWORD luminanceBytesRead;
     {
         vertexByteCode.resize(20000);
         HANDLE vertexByteCodeHandle = CreateFile2(L"shaders\\vertex.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
@@ -249,6 +270,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         hr = device->CreatePixelShader(pixelByteCode.data(), pixelBytesRead, nullptr, &pixelShader);
         assert(hr == S_OK);
         closeSuccess = CloseHandle(pixelByteCodeHandle);
+        assert(closeSuccess);
+
+        luminanceByteCode.resize(20000);
+        HANDLE luminanceByteCodeHandle = CreateFile2(L"shaders\\luminance.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
+        readSuccess = ReadFile(luminanceByteCodeHandle, luminanceByteCode.data(), 20000, &luminanceBytesRead, nullptr);
+        hr = device->CreateComputeShader(luminanceByteCode.data(), luminanceBytesRead, nullptr, &luminanceShader);
+        assert(hr == S_OK);
+        closeSuccess = CloseHandle(luminanceByteCodeHandle);
         assert(closeSuccess);
     }
 
@@ -385,14 +414,41 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		mipViewDesc.Texture2D.MostDetailedMip = 0;
 		mipViewDesc.Texture2D.MipLevels = mipDesc.MipLevels;
 		hr = device->CreateShaderResourceView(downsampleTexture, &mipViewDesc, &mipResourceView);
+        assert(hr == S_OK);
         context->GenerateMips(mipResourceView);
         mipResourceView->Release();
 
+        // prepare resource views for luminance calculation pass
+        ID3D11ShaderResourceView* downsampledLuminanceView;
+        mipViewDesc.Texture2D.MostDetailedMip = numMips-1;
+        mipViewDesc.Texture2D.MipLevels = 1;
+        hr = device->CreateShaderResourceView(downsampleTexture, &mipViewDesc, &downsampledLuminanceView);
+        assert(hr == S_OK);
+
+        ID3D11UnorderedAccessView* luminanceTextureView;
+        D3D11_UNORDERED_ACCESS_VIEW_DESC luminanceDesc;
+        luminanceDesc.Format = DXGI_FORMAT_R8_UNORM;
+        luminanceDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+        luminanceDesc.Texture2D.MipSlice = 0;
+        hr = device->CreateUnorderedAccessView(luminanceTexture, &luminanceDesc, &luminanceTextureView);
+        assert(hr == S_OK);
+
+        // calculate average luminance values
+        context->CSSetShader(luminanceShader, nullptr, 0);
+        context->CSSetShaderResources(0, 1, &downsampledLuminanceView);
+        context->CSSetUnorderedAccessViews(0, 1, &luminanceTextureView, nullptr);
+        context->Dispatch(mipDesc.Width / 8, mipDesc.Height / 8, 1);
+        context->CSSetShaderResources(0, 1, kNullSRV);
+        context->CSSetUnorderedAccessViews(0, 1, kNullUAV, nullptr);
+        luminanceTextureView->Release();
+        downsampledLuminanceView->Release();
+
         // copy a low-resolution mipmap to the LED staging texture
-        context->CopySubresourceRegion(ledTexture, 0, 0, 0, 0, downsampleTexture, numMips-1, nullptr);
+        context->CopySubresourceRegion(ledTexture, 0, 0, 0, 0, downsampleTexture, numMips-2, nullptr);
         D3D11_TEXTURE2D_DESC ledDesc;
         ledTexture->GetDesc(&ledDesc);
 
+        // prepare info we'll need for calculating LED colors
         const uint32_t pixelsPerRow = ledDesc.Width;
         const uint32_t pixelsPerCol = ledDesc.Height;
         const uint32_t numXBuckets = kGridWidth;
