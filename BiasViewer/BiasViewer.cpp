@@ -386,6 +386,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		mipViewDesc.Texture2D.MipLevels = mipDesc.MipLevels;
 		hr = device->CreateShaderResourceView(downsampleTexture, &mipViewDesc, &mipResourceView);
         context->GenerateMips(mipResourceView);
+        mipResourceView->Release();
 
         // copy a low-resolution mipmap to the LED staging texture
         context->CopySubresourceRegion(ledTexture, 0, 0, 0, 0, downsampleTexture, numMips-1, nullptr);
@@ -472,6 +473,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                 yOffset -= 1;
             }
         }
+        bucketTex->Release();
 
         // write colors out to microcontroller
         arduinoController.WritePixels(ledColors);
@@ -525,7 +527,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         // null out shader resources to prepare for next frame
         shaderResource->Release();
         context->PSSetShaderResources(0, 1, kNullSRV);
-
 
         hr = swapchain->Present(1, 0);
 		Sleep(32);
