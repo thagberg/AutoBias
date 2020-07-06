@@ -262,8 +262,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     context->IASetInputLayout(inputLayout);
 
     // can now release shader bytecode buffers
-    vertexByteCode.resize(0);
-    pixelByteCode.resize(0);
+    vertexByteCode.clear();
+    pixelByteCode.clear();
 
     // prepare sampler
     D3D11_SAMPLER_DESC sampleDesc;
