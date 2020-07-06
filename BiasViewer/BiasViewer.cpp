@@ -169,8 +169,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         const uint32_t maxX = desktopWidth / kGridWidth;
         const uint32_t maxY = desktopHeight / kGridHeight;
         // "This is stupid, why do I need to pay attention in Algebra 2" -- Me, 14 years old
-        const uint32_t xMips = std::floor(log2(desktopWidth / (bucketDimension * log2(maxX))));
-        const uint32_t yMips = std::floor(log2(desktopHeight / (bucketDimension * log2(maxY))));
+        const uint32_t xMips = static_cast<uint32_t>(std::floor(log2(desktopWidth / (bucketDimension * log2(maxX)))));
+        const uint32_t yMips = static_cast<uint32_t>(std::floor(log2(desktopHeight / (bucketDimension * log2(maxY)))));
 		numMips = std::min(xMips, yMips);
     }
     assert(numMips > 1);
@@ -396,9 +396,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         const uint32_t pixelsPerCol = ledDesc.Height;
         const uint32_t numXBuckets = kGridWidth;
         const uint32_t numYBuckets = kGridHeight;
-        const uint32_t bucketWidth = std::ceil(static_cast<float>(pixelsPerRow) / numXBuckets);
+        const uint32_t bucketWidth = static_cast<uint32_t>(std::ceil(static_cast<float>(pixelsPerRow) / numXBuckets));
         const uint32_t xRemainder = numXBuckets * bucketWidth - pixelsPerRow;
-        const uint32_t bucketHeight = std::ceil(static_cast<float>(pixelsPerCol) / numYBuckets);
+        const uint32_t bucketHeight = static_cast<uint32_t>(std::ceil(static_cast<float>(pixelsPerCol) / numYBuckets));
         const uint32_t yRemainder = numYBuckets * bucketHeight - pixelsPerCol;
 
         // create a texture for copying buckets into and mapping for CPU read
