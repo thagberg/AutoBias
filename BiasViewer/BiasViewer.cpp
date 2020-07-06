@@ -230,19 +230,27 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 
     // prepare shaders
-    DWORD vertexBytesRead;
-    std::vector<char> vertexByteCode;
-    vertexByteCode.resize(20000);
-    HANDLE vertexByteCodeHandle = CreateFile2(L"shaders\\compiled\\vertex.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
-    bool readSuccess = ReadFile(vertexByteCodeHandle, vertexByteCode.data(), 20000, &vertexBytesRead, nullptr);
-    hr = device->CreateVertexShader(vertexByteCode.data(), vertexBytesRead, nullptr, &vertexShader);
+	std::vector<char> vertexByteCode;
+	std::vector<char> pixelByteCode;
+	DWORD vertexBytesRead;
+	DWORD pixelBytesRead;
+    {
+        vertexByteCode.resize(20000);
+        HANDLE vertexByteCodeHandle = CreateFile2(L"shaders\\vertex.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
+        bool readSuccess = ReadFile(vertexByteCodeHandle, vertexByteCode.data(), 20000, &vertexBytesRead, nullptr);
+        hr = device->CreateVertexShader(vertexByteCode.data(), vertexBytesRead, nullptr, &vertexShader);
+        assert(hr == S_OK);
+        bool closeSuccess = CloseHandle(vertexByteCodeHandle);
+        assert(closeSuccess);
 
-    DWORD pixelBytesRead;
-    std::vector<char> pixelByteCode;
-    pixelByteCode.resize(20000);
-    HANDLE pixelByteCodeHandle = CreateFile2(L"shaders\\compiled\\pixel.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
-    readSuccess = ReadFile(pixelByteCodeHandle, pixelByteCode.data(), 20000, &pixelBytesRead, nullptr);
-    hr = device->CreatePixelShader(pixelByteCode.data(), pixelBytesRead, nullptr, &pixelShader);
+        pixelByteCode.resize(20000);
+        HANDLE pixelByteCodeHandle = CreateFile2(L"shaders\\pixel.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
+        readSuccess = ReadFile(pixelByteCodeHandle, pixelByteCode.data(), 20000, &pixelBytesRead, nullptr);
+        hr = device->CreatePixelShader(pixelByteCode.data(), pixelBytesRead, nullptr, &pixelShader);
+        assert(hr == S_OK);
+        closeSuccess = CloseHandle(pixelByteCodeHandle);
+        assert(closeSuccess);
+    }
 
     D3D11_INPUT_ELEMENT_DESC vertexLayout[] =
     {
@@ -250,7 +258,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
     };
     hr = device->CreateInputLayout(vertexLayout, 2, vertexByteCode.data(), vertexBytesRead, &inputLayout);
+    assert(hr == S_OK);
     context->IASetInputLayout(inputLayout);
+
+    // can now release shader bytecode buffers
+    vertexByteCode.resize(0);
+    pixelByteCode.resize(0);
 
     // prepare sampler
     D3D11_SAMPLER_DESC sampleDesc;
@@ -302,14 +315,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     // Main loop
     MSG msg;
-    while (true)
+    bool running = true;
+    while (running)
     {
         // process window messages
-        if (PeekMessage(&msg, window, 0, 0, PM_REMOVE))
+        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
         {
-            if (msg.message == WM_QUIT)
+            if (msg.message == WM_QUIT || msg.message == WM_CLOSE || msg.message == WM_DESTROY)
             {
-                break;
+                running = false;
             }
 			if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg))
 			{
