@@ -23,6 +23,13 @@
 #include "desktopcapture.h"
 #include "CaptureManager.h"
 
+//#undef RENDERDOC
+
+#if defined(RENDERDOC)
+#include "renderdoc_app.h"
+RENDERDOC_API_1_4_1* rdoc_api = nullptr;
+#endif
+
 #pragma comment(lib, "d3d11.lib")
 
 #define MAX_LOADSTRING 100
@@ -86,6 +93,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_BIASVIEWER));
 
+#if defined(RENDERDOC)
+    HMODULE renderMod = LoadLibraryA("renderdoc.dll");
+    if (HMODULE mod = GetModuleHandleA("renderdoc.dll"))
+    {
+        pRENDERDOC_GetAPI RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)GetProcAddress(mod, "RENDERDOC_GetAPI");
+        int ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_4_1, (void**)&rdoc_api);
+        assert(ret == 1);
+    }
+#endif
+
     HRESULT hr = S_OK;
 
     ID3D11Device* device;
@@ -101,6 +118,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     ID3D11VertexShader* vertexShader = nullptr;
     ID3D11PixelShader* pixelShader = nullptr;
     ID3D11ComputeShader* luminanceShader = nullptr;
+    ID3D11ComputeShader* lutShader = nullptr;
     ID3D11InputLayout* inputLayout;
     ID3D11Buffer* vertexBuffer;
 
@@ -108,6 +126,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     ID3D11Texture2D* luminanceTexture;
     ID3D11Texture2D* ledTexture;
     ID3D11Texture2D* ledToRenderTexture;
+
+    ID3D11Texture3D* colorLutTexture;
 
     std::array<hvk::Color, 8*5> ledColors;
 
@@ -234,6 +254,22 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     hr = device->CreateTexture2D(&texDesc, nullptr, &luminanceTexture);
     assert(hr == S_OK);
 
+    // create texture for holding color LUT
+    {
+        D3D11_TEXTURE3D_DESC lutDesc;
+        lutDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        lutDesc.Width = 256;
+        lutDesc.Height = 256;
+        lutDesc.Depth = 256;
+        lutDesc.Usage = D3D11_USAGE_DEFAULT;
+        lutDesc.CPUAccessFlags = 0;
+        lutDesc.MipLevels = 1;
+        lutDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+        lutDesc.MiscFlags = 0;
+        hr = device->CreateTexture3D(&lutDesc, nullptr, &colorLutTexture);
+        assert(hr == S_OK);
+    }
+
     DXGI_SWAP_CHAIN_DESC1 swapchainDesc;
     RtlZeroMemory(&swapchainDesc, sizeof(swapchainDesc));
     swapchainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
@@ -252,9 +288,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	std::vector<char> vertexByteCode;
 	std::vector<char> pixelByteCode;
     std::vector<char> luminanceByteCode;
+    std::vector<char> lutByteCode;
 	DWORD vertexBytesRead;
 	DWORD pixelBytesRead;
     DWORD luminanceBytesRead;
+    DWORD lutBytesRead;
     {
         vertexByteCode.resize(20000);
         HANDLE vertexByteCodeHandle = CreateFile2(L"shaders\\vertex.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
@@ -279,6 +317,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         assert(hr == S_OK);
         closeSuccess = CloseHandle(luminanceByteCodeHandle);
         assert(closeSuccess);
+
+        lutByteCode.resize(20000);
+        HANDLE lutByteCodeHandle = CreateFile2(L"shaders\\lut_generator.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
+        readSuccess = ReadFile(lutByteCodeHandle, lutByteCode.data(), 20000, &lutBytesRead, nullptr);
+        hr = device->CreateComputeShader(lutByteCode.data(), lutBytesRead, nullptr, &lutShader);
+        assert(hr == S_OK);
+        closeSuccess = CloseHandle(lutByteCodeHandle);
+        assert(closeSuccess);
     }
 
     D3D11_INPUT_ELEMENT_DESC vertexLayout[] =
@@ -293,6 +339,34 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     // can now release shader bytecode buffers
     vertexByteCode.clear();
     pixelByteCode.clear();
+    luminanceByteCode.clear();
+    lutByteCode.clear();
+
+    // generate color LUT
+    {
+#if defined(RENDERDOC)
+	rdoc_api->StartFrameCapture(nullptr, nullptr);
+#endif
+		ID3D11UnorderedAccessView* lutTextureView;
+        D3D11_UNORDERED_ACCESS_VIEW_DESC lutViewDesc;
+        lutViewDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        lutViewDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE3D;
+        lutViewDesc.Texture3D.FirstWSlice = 0;
+        lutViewDesc.Texture3D.MipSlice = 0;
+        lutViewDesc.Texture3D.WSize = 256;
+        hr = device->CreateUnorderedAccessView(colorLutTexture, &lutViewDesc, &lutTextureView);
+        assert(hr == S_OK);
+
+        context->CSSetShader(lutShader, nullptr, 0);
+        context->CSSetUnorderedAccessViews(0, 1, &lutTextureView, nullptr);
+        context->Dispatch(32, 32, 32);
+        context->CSSetShaderResources(0, 1, kNullSRV);
+        context->CSSetUnorderedAccessViews(0, 1, kNullUAV, nullptr);
+        lutTextureView->Release();
+#if defined(RENDERDOC)
+	rdoc_api->EndFrameCapture(nullptr, nullptr);
+#endif
+    }
 
     // prepare sampler
     D3D11_SAMPLER_DESC sampleDesc;
@@ -403,6 +477,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         // surface has been copied, so we can now release the frame
         desktopSurfaceTexture->Release();
         cm.ReleaseFrame();
+
+#if defined(RENDERDOC)
+        rdoc_api->StartFrameCapture(nullptr, nullptr);
+#endif
 
         // create a resource view for the texture so that we can generate mip-maps
         D3D11_TEXTURE2D_DESC mipDesc;
@@ -585,6 +663,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         context->PSSetShaderResources(0, 1, kNullSRV);
 
         hr = swapchain->Present(1, 0);
+
+#if defined(RENDERDOC)
+        rdoc_api->EndFrameCapture(nullptr, nullptr);
+#endif
 		Sleep(32);
     }
 
