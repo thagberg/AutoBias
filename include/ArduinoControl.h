@@ -48,8 +48,8 @@ namespace hvk
 			bool mDeviceConnected;
 			std::thread mIOThread;
 			std::shared_mutex mBufferMutex;
-			bool mWaitingOnRead;
-			OVERLAPPED mOverlappedRead;
+			bool mDisplayReady;
+			char mReadBuffer[256];
 
 			void UpdateDevice();
 		};
@@ -63,9 +63,11 @@ namespace hvk
 			, mBackbuffer(0)
 			, mDeviceConnected(false)
 			, mIOThread()
-			, mWaitingOnRead(false)
-			, mOverlappedRead{0}
+			, mBufferMutex()
+			, mDisplayReady(true)
 		{
+			ZeroMemory(mReadBuffer, 256);
+
 			// initialize framebuffers
 			for (auto& fb : mFramebuffers)
 			{
@@ -95,7 +97,7 @@ namespace hvk
 				NULL,
 				NULL,
 				OPEN_EXISTING,
-				FILE_FLAG_OVERLAPPED,
+				FILE_ATTRIBUTE_NORMAL,
 				NULL);
 			assert(mCommHandle != INVALID_HANDLE_VALUE);
 			if (mCommHandle == INVALID_HANDLE_VALUE)
@@ -142,75 +144,31 @@ namespace hvk
 		{
 			while (mDeviceConnected)
 			{
-				if (mWaitingOnRead)
-				{
-					//GetOverlappedResult(mCommHandle)
-					DWORD numBytesRead;
-					bool readSuccess = GetOverlappedResult(mCommHandle, &mOverlappedRead, &numBytesRead, true);
-					if (readSuccess)
-					{ 
-						ZeroMemory(&mOverlappedRead, sizeof(OVERLAPPED));
-						mWaitingOnRead = false;
-						mDeviceReady = true;
-					}
-					else
-					{
-						DWORD lastErr = GetLastError();
-						assert(lastErr == ERROR_IO_PENDING || lastErr == ERROR_IO_INCOMPLETE);
-					}
-				}
-				else
-				{
-					char readBuffer[256] = { 0 };
-					DWORD numBytesRead;
-					//mOverlappedRead.hEvent = CreateEvent(nullptr, true, false, nullptr);
-					bool readSuccess = ReadFile(mCommHandle, readBuffer, 256, &numBytesRead, &mOverlappedRead);
-					//assert(readSuccess);
-					if (!readSuccess)
-					{
-						assert(GetLastError() == ERROR_IO_PENDING);
-						mWaitingOnRead = true;
-					}
-					else
-					{
-						mDeviceReady = true;
-					}
-				}
+				DWORD numBytesRead;
+				bool readSuccess = ReadFile(mCommHandle, mReadBuffer, 1, &numBytesRead, nullptr);
+				assert(readSuccess);
 
-				if (mDeviceReady)
+				if (mDisplayReady)
 				{
-					mDeviceReady = false;
-
-					// first swap the buffers
+					mDisplayReady = false;
+					int frontbufferIndex;
 					{
 						std::unique_lock swapLock(mBufferMutex);
-						mBackbuffer = mBackbuffer % 1;
+						mBackbuffer++;
+						if (mBackbuffer > 1)
+						{
+							mBackbuffer = 0;
+						}
+
+						frontbufferIndex = ~mBackbuffer & 1;
 					}
 
-					// then update the device
+					const auto& frontbuffer = mFramebuffers[frontbufferIndex];
+
 					const uint8_t numPixelsToWrite = W * H;
-					bool writeSuccess = false;
-					{
-						std::shared_lock bufferLock(mBufferMutex);
-						const auto& frontbuffer = mFramebuffers[mBackbuffer % 1];
-						DWORD numBytesWritten;
-						OVERLAPPED overlappedWrite = { 0 };
-						writeSuccess = WriteFile(mCommHandle, frontbuffer.buffer.data(), sizeof(Color) * numPixelsToWrite, &numBytesWritten, &overlappedWrite);
-					}
-					if (!writeSuccess)
-					{
-						DWORD lastError = GetLastError();
-						assert(lastError == ERROR_IO_PENDING);
-					}
-					//assert(writeSuccess = true);
-
-					// then confirm the device response
-					//char readBuffer[256] = { 0 };
-					//DWORD numBytesRead;
-					//bool readSuccess = ReadFile(mCommHandle, readBuffer, 1, &numBytesRead, nullptr);
-					//assert(readSuccess = true);
-
-					//mDeviceReady = true;
+					DWORD numBytesWritten;
+					bool writeSuccess = WriteFile(mCommHandle, frontbuffer.buffer.data(), sizeof(Color) * numPixelsToWrite, &numBytesWritten, nullptr);
+					assert(writeSuccess);
 				}
 
 				Sleep(16);
@@ -221,10 +179,11 @@ namespace hvk
 		DWORD ArduinoController<W, H>::WritePixels(const std::array<Color, W*H>& colors)
 		{
 			{
-				std::shared_lock bufferLock(mBufferMutex);
+				std::unique_lock bufferLock(mBufferMutex);
 				auto& backbuffer = mFramebuffers[mBackbuffer];
 				auto copyStatus = memcpy_s(backbuffer.buffer.data(), sizeof(Color) * W * H, colors.data(), sizeof(Color) * W * H);
 				assert(copyStatus == S_OK);
+				mDisplayReady = true;
 			}
 
 			return 0;
