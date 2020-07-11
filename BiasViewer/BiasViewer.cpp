@@ -14,7 +14,7 @@
 #include <assert.h>
 #include <array>
 
-#include <d3d11.h>
+#include <d3d11_3.h>
 #include <dxgi1_2.h>
 #include <DirectXMath.h>
 
@@ -23,7 +23,7 @@
 #include "desktopcapture.h"
 #include "CaptureManager.h"
 
-//#undef RENDERDOC
+#undef RENDERDOC
 
 #if defined(RENDERDOC)
 #include "renderdoc_app.h"
@@ -105,10 +105,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     HRESULT hr = S_OK;
 
-    ID3D11Device* device;
-    ID3D11DeviceContext* context;
-    IDXGIDevice* dxgiDevice;
-    IDXGIAdapter* dxgiAdapter;
+    ID3D11Device* baseDevice;
+    ID3D11Device3* device;
+    ID3D11DeviceContext* baseContext;
+    ID3D11DeviceContext4* context;
+    IDXGIDevice3* dxgiDevice;
+    IDXGIAdapter* baseDxgiAdapter;
+    IDXGIAdapter2* dxgiAdapter;
     IDXGIFactory2* dxgiFactory;
     ID3D11Texture2D* desktopSurfaceTexture = nullptr;
     IDXGISwapChain1* swapchain;
@@ -119,6 +122,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     ID3D11PixelShader* pixelShader = nullptr;
     ID3D11ComputeShader* luminanceShader = nullptr;
     ID3D11ComputeShader* lutShader = nullptr;
+    ID3D11ComputeShader* correctShader = nullptr;
     ID3D11InputLayout* inputLayout;
     ID3D11Buffer* vertexBuffer;
 
@@ -133,7 +137,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     D3D_FEATURE_LEVEL FeatureLevels[] =
     {
-        D3D_FEATURE_LEVEL_11_0
+        D3D_FEATURE_LEVEL_12_0
     };
 
     D3D_FEATURE_LEVEL availableFeatureLevel;
@@ -142,23 +146,31 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         nullptr, 
         D3D_DRIVER_TYPE_HARDWARE, 
         nullptr, 
-        D3D11_CREATE_DEVICE_DEBUG,
+        0,
+        //D3D11_CREATE_DEVICE_DEBUG,
         FeatureLevels, 
         1, 
         D3D11_SDK_VERSION, 
-        &device, 
+        &baseDevice, 
         &availableFeatureLevel, 
-        &context);
-
+        &baseContext);
     assert(SUCCEEDED(hr));
 
-    hr = device->QueryInterface<IDXGIDevice>(&dxgiDevice);
+    hr = baseDevice->QueryInterface<ID3D11Device3>(&device);
     assert(SUCCEEDED(hr));
 
-    hr = dxgiDevice->GetAdapter(&dxgiAdapter);
+    hr = baseContext->QueryInterface<ID3D11DeviceContext4>(&context);
     assert(SUCCEEDED(hr));
 
-    hr = dxgiAdapter->GetParent(__uuidof(IDXGIFactory), reinterpret_cast<void**>(&dxgiFactory));
+    hr = device->QueryInterface<IDXGIDevice3>(&dxgiDevice);
+    assert(SUCCEEDED(hr));
+
+    hr = dxgiDevice->GetAdapter(&baseDxgiAdapter);
+    assert(SUCCEEDED(hr));
+
+    hr = baseDxgiAdapter->QueryInterface<IDXGIAdapter2>(&dxgiAdapter);
+
+    hr = dxgiAdapter->GetParent(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(&dxgiFactory));
     assert(SUCCEEDED(hr));
 
     CaptureManager cm;
@@ -166,8 +178,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     assert(hr == S_OK);
 
     // initialize Arduino Control
+#if defined(RELEASE) || defined(ARDUINO_CONTROLLER)
     hvk::control::ArduinoController<kGridWidth, kGridHeight> arduinoController;
     arduinoController.Init();
+#endif
 
     HWND desktopWindow = GetDesktopWindow();
     RECT desktopRect;
@@ -289,10 +303,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	std::vector<char> pixelByteCode;
     std::vector<char> luminanceByteCode;
     std::vector<char> lutByteCode;
+    std::vector<char> colorCorrectByteCode;
 	DWORD vertexBytesRead;
 	DWORD pixelBytesRead;
     DWORD luminanceBytesRead;
     DWORD lutBytesRead;
+    DWORD colorCorrectBytesRead;
     {
         vertexByteCode.resize(20000);
         HANDLE vertexByteCodeHandle = CreateFile2(L"shaders\\vertex.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
@@ -324,6 +340,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         hr = device->CreateComputeShader(lutByteCode.data(), lutBytesRead, nullptr, &lutShader);
         assert(hr == S_OK);
         closeSuccess = CloseHandle(lutByteCodeHandle);
+        assert(closeSuccess);
+
+        colorCorrectByteCode.resize(20000);
+        HANDLE corByteCodeHandle = CreateFile2(L"shaders\\color_correct.cso", GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
+        readSuccess = ReadFile(corByteCodeHandle, colorCorrectByteCode.data(), 20000, &colorCorrectBytesRead, nullptr);
+        hr = device->CreateComputeShader(colorCorrectByteCode.data(), colorCorrectBytesRead, nullptr, &correctShader);
+        assert(hr == S_OK);
+        closeSuccess = CloseHandle(corByteCodeHandle);
         assert(closeSuccess);
     }
 
@@ -482,6 +506,32 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         rdoc_api->StartFrameCapture(nullptr, nullptr);
 #endif
 
+        // perform color correction on desktop texture
+		ID3D11UnorderedAccessView* colorCorrectView;
+        D3D11_UNORDERED_ACCESS_VIEW_DESC corDesc;
+        corDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        corDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+        corDesc.Texture2D.MipSlice = 0;
+        hr = device->CreateUnorderedAccessView(downsampleTexture, &corDesc, &colorCorrectView);
+        assert(hr == S_OK);
+        ID3D11ShaderResourceView* lutView;
+        D3D11_SHADER_RESOURCE_VIEW_DESC lutDesc;
+        lutDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        lutDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
+        lutDesc.Texture3D.MipLevels = 1;
+        lutDesc.Texture3D.MostDetailedMip = 0;
+        hr = device->CreateShaderResourceView(colorLutTexture, &lutDesc, &lutView);
+        assert(hr == S_OK);
+
+        context->CSSetShader(correctShader, nullptr, 0);
+        context->CSSetUnorderedAccessViews(0, 1, &colorCorrectView, nullptr);
+        context->CSSetShaderResources(0, 1, &lutView);
+        context->Dispatch(32, 32, 32);
+        context->CSSetShaderResources(0, 1, kNullSRV);
+        context->CSSetUnorderedAccessViews(0, 1, kNullUAV, nullptr);
+        colorCorrectView->Release();
+        lutView->Release();
+
         // create a resource view for the texture so that we can generate mip-maps
         D3D11_TEXTURE2D_DESC mipDesc;
         downsampleTexture->GetDesc(&mipDesc);
@@ -523,6 +573,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
         // copy a low-resolution mipmap to the LED staging texture
         context->CopySubresourceRegion(ledTexture, 0, 0, 0, 0, downsampleTexture, numMips-2, nullptr);
+        
+        // perform color correction on the low-resolution texture
+
         D3D11_TEXTURE2D_DESC ledDesc;
         ledTexture->GetDesc(&ledDesc);
 
@@ -609,8 +662,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         }
         bucketTex->Release();
 
+#if defined(RELEASE) || defined(ARDUINO_CONTROLLER)
         // write colors out to microcontroller
         arduinoController.WritePixels(ledColors);
+#endif
 
         // write data to texture for the viewer app
         std::vector<uint8_t> ledData;
