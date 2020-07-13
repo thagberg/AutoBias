@@ -141,8 +141,22 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     sampler.ShaderRegister = 0;
     sampler.RegisterSpace = 0;
     sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    D3D12_DESCRIPTOR_RANGE texRange = {};
+    texRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    texRange.NumDescriptors = 1;
+    texRange.BaseShaderRegister = 0;
+    texRange.RegisterSpace = 0;
+    texRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    D3D12_ROOT_PARAMETER texParam = {};
+    texParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    texParam.DescriptorTable.NumDescriptorRanges = 1;
+    texParam.DescriptorTable.pDescriptorRanges = &texRange;
+    texParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
     ComPtr<ID3D12RootSignature> rootSignature;
-    hr = hvk::render::CreateRootSignature(device, std::vector<D3D12_ROOT_PARAMETER>(), std::vector<D3D12_STATIC_SAMPLER_DESC>(), rootSignature);
+    hr = hvk::render::CreateRootSignature(device, { texParam }, { sampler }, rootSignature);
     assert(SUCCEEDED(hr));
 
     D3D12_INPUT_ELEMENT_DESC vertexInputs[] =
