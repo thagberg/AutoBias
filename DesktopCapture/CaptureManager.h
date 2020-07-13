@@ -1,7 +1,9 @@
 #pragma once
 
-struct ID3D11Device;
-struct ID3D11DeviceContext;
+#include <d3d11.h>
+
+struct IDXGIAdapter1;
+struct IDXGIOutput5;
 
 class CaptureManager
 {
@@ -9,7 +11,7 @@ public:
 	__declspec(dllexport) CaptureManager();
     __declspec(dllexport) ~CaptureManager();
 
-    __declspec(dllexport) HRESULT Init(ID3D11Device* device, IDXGIAdapter* dxgiAdapter);
+    __declspec(dllexport) HRESULT Init();
 
     __declspec(dllexport) HRESULT __stdcall AcquireFrameAsTexture(ID3D11Texture2D** tex);
 
@@ -18,8 +20,9 @@ public:
 private:
     bool mInitialized;
 	ID3D11Device* mDevice;
-    IDXGIAdapter* mDxgiAdapter;
+    ID3D11DeviceContext* mContext;
+    IDXGIAdapter1* mDxgiAdapter;
     IDXGIOutput* mDxgiOutput;
-    IDXGIOutput1* mDxgiOutput1;
+    IDXGIOutput5* mDxgiOutput1;
     IDXGIOutputDuplication* mDuplication;
 };
