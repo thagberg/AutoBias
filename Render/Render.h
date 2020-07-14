@@ -129,7 +129,7 @@ namespace hvk
 			D3D12_DESCRIPTOR_HEAP_DESC miscDesc = {};
 			miscDesc.NumDescriptors = kMiscDescriptors;
 			miscDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-			miscDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+			miscDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 			hr = device->CreateDescriptorHeap(&miscDesc, IID_PPV_ARGS(&miscOut));
 			if (hr != S_OK)
 			{
@@ -139,7 +139,7 @@ namespace hvk
 			D3D12_DESCRIPTOR_HEAP_DESC samplersDesc = {};
 			samplersDesc.NumDescriptors = kSamplerDescriptors;
 			samplersDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
-			samplersDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+			samplersDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 			hr = device->CreateDescriptorHeap(&samplersDesc, IID_PPV_ARGS(&samplersOut));
 
 			return hr;
@@ -147,14 +147,30 @@ namespace hvk
 
 		HRESULT CreateRenderTargetView(
 			ComPtr<ID3D12Device> device, 
+			ComPtr<IDXGISwapChain1> swapchain,
 			ComPtr<ID3D12DescriptorHeap> rtvHeap,
-			ComPtr<ID3D12Resource>& rtvOut)
+			size_t numRendertargets,
+			ComPtr<ID3D12Resource>* rtvOut)
 		{
 			auto hr = S_OK;
 			auto rtvHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
 
-			// TODO: provide D3D12_RENDER_TARGET_VIEW_DESC instead of nullptr
-			device->CreateRenderTargetView(rtvOut.Get(), nullptr, rtvHandle);
+			auto descriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+			for (size_t i = 0; i < numRendertargets; ++i)
+			{
+				// TODO: provide D3D12_RENDER_TARGET_VIEW_DESC instead of nullptr
+				hr = swapchain->GetBuffer(i, IID_PPV_ARGS(&rtvOut[i]));
+				if (SUCCEEDED(hr))
+				{
+					device->CreateRenderTargetView(rtvOut[i].Get(), nullptr, rtvHandle);
+					rtvHandle.ptr += descriptorSize;
+				}
+				else
+				{
+					break;
+				}
+			}
 			return hr;
 		}
 
@@ -256,7 +272,7 @@ namespace hvk
 			ComPtr<ID3D12Device> device,
 			ComPtr<ID3D12CommandAllocator> allocator,
 			ComPtr<ID3D12PipelineState> pipeline,
-			ComPtr<ID3D12CommandList>& clOut)
+			ComPtr<ID3D12GraphicsCommandList>& clOut)
 		{
 			auto hr = S_OK;
 

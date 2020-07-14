@@ -96,34 +96,45 @@ HRESULT CaptureManager::Init()
 	return hr;
 }
 
-HRESULT CaptureManager::AcquireFrameAsTexture(ID3D11Texture2D** tex)
+HRESULT CaptureManager::AcquireFrameAsDXGIResource(IDXGIResource** frameResource)
 {
 	assert(mInitialized);
-
-	IDXGIResource* displayResource;
 	DXGI_OUTDUPL_FRAME_INFO frameInfo;
 
-	HRESULT hr = S_OK;
-
 	// first release the frame (if we are currently holding it)
-	hr = mDuplication->ReleaseFrame();
+	HRESULT hr = mDuplication->ReleaseFrame();
 	// INVALID_CALL is probably ok, because it means the frame was already released
 	if (hr != S_OK && hr != DXGI_ERROR_INVALID_CALL)
 	{
-		if (hr == DXGI_ERROR_ACCESS_LOST)
-		{
-			return hr;
-		}
-	}
-
-	hr = mDuplication->AcquireNextFrame(INFINITE, &frameInfo, &displayResource);
-	if (hr != S_OK)
-	{
+		frameResource = nullptr;
 		return hr;
 	}
 
-	hr = displayResource->QueryInterface<ID3D11Texture2D>(tex);
+	hr = mDuplication->AcquireNextFrame(INFINITE, &frameInfo, frameResource);
 	return hr;
+}
+
+HRESULT CaptureManager::AcquireFrameAsTexture(ID3D11Texture2D** tex)
+{
+	IDXGIResource* displayResource;
+	HRESULT hr = AcquireFrameAsDXGIResource(&displayResource);
+	if (SUCCEEDED(hr))
+	{
+		hr = displayResource->QueryInterface<ID3D11Texture2D>(tex);
+	}
+	return hr;
+}
+
+HRESULT CaptureManager::AcquireFrameAsSurface(IDXGISurface** surface)
+{
+	IDXGIResource* displayResource;
+	HRESULT hr = AcquireFrameAsDXGIResource(&displayResource);
+	if (SUCCEEDED(hr))
+	{
+		hr = displayResource->QueryInterface<IDXGISurface>(surface);
+	}
+	return hr;
+
 }
 
 HRESULT CaptureManager::ReleaseFrame()

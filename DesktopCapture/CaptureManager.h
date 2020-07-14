@@ -13,7 +13,11 @@ public:
 
     __declspec(dllexport) HRESULT Init();
 
+    __declspec(dllexport) HRESULT __stdcall AcquireFrameAsDXGIResource(IDXGIResource** frameResource);
+
     __declspec(dllexport) HRESULT __stdcall AcquireFrameAsTexture(ID3D11Texture2D** tex);
+
+    __declspec(dllexport) HRESULT __stdcall AcquireFrameAsSurface(IDXGISurface** surface);
 
     __declspec(dllexport) HRESULT __stdcall ReleaseFrame();
 
