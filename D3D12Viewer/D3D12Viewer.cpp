@@ -4,15 +4,30 @@
 #include "framework.h"
 #include "D3D12Viewer.h"
 
+#include <iostream>
+#include <memory>
+
 #include <d3d12.h>
 #include <dxgi1_2.h>
 #include <DirectXMath.h>
 
 #include <Render.h>
+#include "bias_util.h"
+
+#define CAPTURE
+#if defined(CAPTURE)
 #include <CaptureManager.h>
+#endif
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
+
+//#define RENDERDOC
+
+#if defined(RENDERDOC)
+#include "renderdoc_app.h"
+RENDERDOC_API_1_4_1* rdoc_api = nullptr;
+#endif
 
 #define MAX_LOADSTRING 100
 
@@ -27,13 +42,14 @@ struct Vertex
 const uint8_t kNumVertices = 6;
 const Vertex kVertices[kNumVertices] =
 {
-	{DirectX::XMFLOAT3(-1.f, -1.f, 0.f), DirectX::XMFLOAT2(0.f, 1.f)},
-	{DirectX::XMFLOAT3(-1.f, 1.f, 0.f), DirectX::XMFLOAT2(0.f, 0.f)},
-	{DirectX::XMFLOAT3(1.f, -1.f, 0.f), DirectX::XMFLOAT2(1.f, 1.f)},
-	{DirectX::XMFLOAT3(1.f, -1.f, 0.f), DirectX::XMFLOAT2(1.f, 1.f)},
-	{DirectX::XMFLOAT3(-1.f, 1.f, 0.f), DirectX::XMFLOAT2(0.f, 0.f)},
-	{DirectX::XMFLOAT3(1.f, 1.f, 0.f), DirectX::XMFLOAT2(1.f, 0.f)},
+	{DirectX::XMFLOAT3(-1.f, -1.f, 0.5f), DirectX::XMFLOAT2(0.f, 1.f)},
+	{DirectX::XMFLOAT3(-1.f, 1.f, 0.5f), DirectX::XMFLOAT2(0.f, 0.f)},
+	{DirectX::XMFLOAT3(1.f, -1.f, 0.5f), DirectX::XMFLOAT2(1.f, 1.f)},
+	{DirectX::XMFLOAT3(1.f, -1.f, 0.5f), DirectX::XMFLOAT2(1.f, 1.f)},
+	{DirectX::XMFLOAT3(-1.f, 1.f, 0.5f), DirectX::XMFLOAT2(0.f, 0.f)},
+	{DirectX::XMFLOAT3(1.f, 1.f, 0.5f), DirectX::XMFLOAT2(1.f, 0.f)},
 };
+
 
 // Global Variables:
 HINSTANCE hInst;                                // current instance
@@ -72,6 +88,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_D3D12VIEWER));
 
     //-------------------------------------------
+#if defined(RENDERDOC)
+	HMODULE renderMod = LoadLibraryA("renderdoc.dll");
+	if (HMODULE mod = GetModuleHandleA("renderdoc.dll"))
+	{
+		pRENDERDOC_GetAPI RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)GetProcAddress(mod, "RENDERDOC_GetAPI");
+		int ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_4_1, (void**)&rdoc_api);
+		assert(ret == 1);
+	}
+#endif
+    
     HWND desktopWindow = GetDesktopWindow();
     RECT desktopRect;
     GetWindowRect(desktopWindow, &desktopRect);
@@ -87,7 +113,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     ComPtr<IDXGIAdapter1> hardwareAdapter;
     ComPtr<ID3D12Device> device;
     ComPtr<ID3D12CommandQueue> commandQueue;
-    ComPtr<IDXGISwapChain1> swapchain;
+    ComPtr<IDXGISwapChain3> swapchain;
     ComPtr<ID3D12DescriptorHeap> rtvHeap;
     ComPtr<ID3D12DescriptorHeap> uavHeap;
     ComPtr<ID3D12DescriptorHeap> samplerHeap;
@@ -187,9 +213,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     hr = hvk::render::CreateRenderTargetView(device, swapchain, rtvHeap, kFramebuffers, rendertargets);
     assert(SUCCEEDED(hr));
 
+    ComPtr<ID3D12Fence> frameFence;
+    uint64_t fenceValue = 0;
+    hr = hvk::render::CreateFence(device, frameFence);
+    auto fenceEvent = CreateEvent(nullptr, false, false, nullptr);
+    assert(SUCCEEDED(hr));
+
     D3D12_VIEWPORT viewport = {};
-    viewport.Width = windowWidth;
-    viewport.Height = windowHeight;
+    viewport.Width = static_cast<float>(windowWidth);
+    viewport.Height = static_cast<float>(windowHeight);
     viewport.TopLeftX = 0.f;
     viewport.TopLeftY = 0.f;
     viewport.MinDepth = 0.f;
@@ -201,14 +233,20 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     scissorRect.top = 0;
     scissorRect.bottom = windowHeight;
 
+	ComPtr<ID3D12Resource> d3d12Resource;
+
+#if defined(CAPTURE)
     CaptureManager cm;
     hr = cm.Init();
+#else
+    commandList->Reset(commandAllocator.Get(), nullptr);
+    hr = hvk::bias::GenerateDummyTexture(device, commandList, commandQueue, d3d12Resource);
+    assert(SUCCEEDED(hr));
+#endif
 
     MSG msg;
     bool running = true;
 
-    //ID3D11Texture2D* desktopSurfaceTexture = nullptr;
-    //IDXGISurface* desktopSurface = nullptr;
     IDXGIResource* desktopResource = nullptr;
 
     uint8_t frameIndex = 0;
@@ -232,20 +270,42 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         {
             desktopResource->Release();
         }
-        hr = cm.AcquireFrameAsDXGIResource(&desktopResource);
-        IDXGIResource1* sharedResource;
-        desktopResource->QueryInterface<IDXGIResource1>(&sharedResource);
-        HANDLE hTexture;
-        sharedResource->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &hTexture);
-        ID3D12Resource* d3d12Resource;
-        device->OpenSharedHandle(hTexture, __uuidof(ID3D12Resource), (void**)&d3d12Resource);
-        auto resourceDesc = d3d12Resource->GetDesc();
 
         hr = commandAllocator->Reset();
         assert(SUCCEEDED(hr));
 
         hr = commandList->Reset(commandAllocator.Get(), pipelineState.Get());
         assert(SUCCEEDED(hr));
+
+        D3D12_RESOURCE_DESC resourceDesc = {};
+#if defined(CAPTURE)
+        hr = hvk::bias::GetNextFrameResource(cm, &desktopResource);
+        assert(SUCCEEDED(hr));
+
+        IDXGIResource1* sharedResource;
+        desktopResource->QueryInterface<IDXGIResource1>(&sharedResource);
+        HANDLE hTexture;
+        sharedResource->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &hTexture);
+        device->OpenSharedHandle(hTexture, IID_PPV_ARGS(&d3d12Resource));
+        resourceDesc = d3d12Resource->GetDesc();
+        //desktopResource->Release();
+        //cm.ReleaseFrame();
+#else
+        resourceDesc = d3d12Resource->GetDesc();
+#endif
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDesc.Format = resourceDesc.Format;
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = 1;
+        auto resourcePtr = d3d12Resource.Get();
+        auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
+        device->CreateShaderResourceView(resourcePtr, &srvDesc, uavHandle);
+
+#if defined(RENDERDOC)
+        rdoc_api->StartFrameCapture(device.Get(), window);
+#endif
 
         commandList->SetGraphicsRootSignature(rootSignature.Get());
 
@@ -292,6 +352,31 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         commandQueue->ExecuteCommandLists(1, commandLists);
         hr = swapchain->Present(1, 0);
         assert(SUCCEEDED(hr));
+
+        uint64_t fence = fenceValue;
+        commandQueue->Signal(frameFence.Get(), fence);
+        ++fenceValue;
+
+        std::cout << frameFence->GetCompletedValue() << std::endl;
+        if (frameFence->GetCompletedValue() < fence)
+        {
+            hr = frameFence->SetEventOnCompletion(fence, fenceEvent);
+            assert(SUCCEEDED(hr));
+            WaitForSingleObject(fenceEvent, INFINITE);
+        }
+
+#if defined(RENDERDOC)
+        //rdoc_api->UnloadCrashHandler();
+        auto rdocStatus = rdoc_api->IsFrameCapturing();
+        assert(rdocStatus == 1);
+        rdocStatus = rdoc_api->EndFrameCapture(device.Get(), window);
+        assert(rdocStatus == 1);
+        //rdoc_api->DiscardFrameCapture(device.Get(), window);
+#endif
+
+
+        frameIndex = swapchain->GetCurrentBackBufferIndex();
+        Sleep(16);
     }
 
     return (int) msg.wParam;

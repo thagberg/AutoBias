@@ -27,6 +27,9 @@
     <ClInclude Include="D3D12Viewer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="bias_util.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="D3D12Viewer.cpp">

@@ -81,9 +81,9 @@ namespace hvk
 			ComPtr<IDXGIFactory4> factory,
 			HWND window,
 			uint8_t bufferCount, 
-			uint8_t width, 
-			uint8_t height, 
-			ComPtr<IDXGISwapChain1>& scOut)
+			uint16_t width, 
+			uint16_t height, 
+			ComPtr<IDXGISwapChain3>& scOut)
 		{
 			DXGI_SWAP_CHAIN_DESC1 desc = {};
 			desc.BufferCount = bufferCount;
@@ -97,13 +97,16 @@ namespace hvk
 			desc.SampleDesc.Quality = 0;
 
 			// Using nullptr for the FULLSCREEN_DESC to ensure this is windowed
+			ComPtr<IDXGISwapChain1> swap1;
 			auto hr = factory->CreateSwapChainForHwnd(
 				commandQueue.Get(),
 				window,
 				&desc,
 				nullptr,
 				nullptr,
-				&scOut);
+				&swap1);
+			assert(SUCCEEDED(hr));
+			hr = swap1->QueryInterface<IDXGISwapChain3>(&scOut);
 			return hr;
 		}
 
@@ -221,6 +224,7 @@ namespace hvk
 			D3D12_RENDER_TARGET_BLEND_DESC rtBlend = {};
 			rtBlend.BlendEnable = FALSE;
 			rtBlend.LogicOpEnable = FALSE;
+			rtBlend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 
 			D3D12_BLEND_DESC blend = {};
 			blend.AlphaToCoverageEnable = FALSE;
@@ -233,11 +237,11 @@ namespace hvk
 			D3D12_RASTERIZER_DESC raster = {};
 			raster.FillMode = D3D12_FILL_MODE_SOLID;
 			raster.CullMode = D3D12_CULL_MODE_NONE;
-			raster.FrontCounterClockwise = TRUE;
+			raster.FrontCounterClockwise = FALSE;
 			raster.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
 			raster.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
 			raster.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
-			raster.DepthClipEnable = FALSE;
+			raster.DepthClipEnable = TRUE;
 			raster.MultisampleEnable = FALSE;
 			raster.AntialiasedLineEnable = FALSE;
 			raster.ForcedSampleCount = 0;
@@ -315,7 +319,8 @@ namespace hvk
 			vbDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
 			hr = device->CreateCommittedResource(
-				&heapProps, D3D12_HEAP_FLAG_NONE, 
+				&heapProps, 
+				D3D12_HEAP_FLAG_NONE, 
 				&vbDesc, 
 				D3D12_RESOURCE_STATE_GENERIC_READ, 
 				nullptr, 
@@ -336,6 +341,29 @@ namespace hvk
 			vbView.StrideInBytes = stride;
 			vbView.SizeInBytes = vbSize;
 			return vbView;
+		}
+
+		HRESULT WaitForGraphics(ComPtr<ID3D12Device> device, ComPtr<ID3D12CommandQueue> commandQueue)
+		{
+			HRESULT hr = S_OK;
+			ComPtr<ID3D12Fence> fence;
+			hr = render::CreateFence(device, fence);
+			uint64_t fenceValue = 1;
+			hr = commandQueue->Signal(fence.Get(), fenceValue);
+			assert(SUCCEEDED(hr));
+
+			if (SUCCEEDED(hr))
+			{
+				auto fenceEvent = CreateEvent(nullptr, false, false, nullptr);
+				if (fence->GetCompletedValue() != fenceValue)
+				{
+					hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
+					assert(SUCCEEDED(hr));
+					WaitForSingleObject(fenceEvent, INFINITE);
+				}
+			}
+
+			return hr;
 		}
 	}
 }

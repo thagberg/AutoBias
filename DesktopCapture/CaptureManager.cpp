@@ -96,7 +96,7 @@ HRESULT CaptureManager::Init()
 	return hr;
 }
 
-HRESULT CaptureManager::AcquireFrameAsDXGIResource(IDXGIResource** frameResource)
+HRESULT CaptureManager::AcquireFrameAsDXGIResource(IDXGIResource** frameResource) const
 {
 	assert(mInitialized);
 	DXGI_OUTDUPL_FRAME_INFO frameInfo;
@@ -114,7 +114,7 @@ HRESULT CaptureManager::AcquireFrameAsDXGIResource(IDXGIResource** frameResource
 	return hr;
 }
 
-HRESULT CaptureManager::AcquireFrameAsTexture(ID3D11Texture2D** tex)
+HRESULT CaptureManager::AcquireFrameAsTexture(ID3D11Texture2D** tex) const
 {
 	IDXGIResource* displayResource;
 	HRESULT hr = AcquireFrameAsDXGIResource(&displayResource);
@@ -125,7 +125,7 @@ HRESULT CaptureManager::AcquireFrameAsTexture(ID3D11Texture2D** tex)
 	return hr;
 }
 
-HRESULT CaptureManager::AcquireFrameAsSurface(IDXGISurface** surface)
+HRESULT CaptureManager::AcquireFrameAsSurface(IDXGISurface** surface) const
 {
 	IDXGIResource* displayResource;
 	HRESULT hr = AcquireFrameAsDXGIResource(&displayResource);
@@ -137,7 +137,7 @@ HRESULT CaptureManager::AcquireFrameAsSurface(IDXGISurface** surface)
 
 }
 
-HRESULT CaptureManager::ReleaseFrame()
+HRESULT CaptureManager::ReleaseFrame() const
 {
 	HRESULT hr = mDuplication->ReleaseFrame();
 	if (hr != S_OK && hr != DXGI_ERROR_INVALID_CALL)
