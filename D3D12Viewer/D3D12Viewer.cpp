@@ -23,7 +23,6 @@
 #pragma comment(lib, "dxgi.lib")
 
 #define RENDERDOC
-
 #if defined(RENDERDOC)
 #include "renderdoc_app.h"
 RENDERDOC_API_1_4_1* rdoc_api = nullptr;
@@ -136,10 +135,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     std::vector<uint8_t> vertexByteCode;
     std::vector<uint8_t> pixelByteCode;
-    std::vector<uint8_t> lutByteCode;
     bool shaderLoadSuccess = hvk::bias::LoadShaderByteCode(L"shaders\\vertex.cso", vertexByteCode);
     shaderLoadSuccess &= hvk::bias::LoadShaderByteCode(L"shaders\\pixel.cso", pixelByteCode);
-    shaderLoadSuccess &= hvk::bias::LoadShaderByteCode(L"shaders\\lut_generator.cso", lutByteCode);
     assert(shaderLoadSuccess);
 
     D3D12_STATIC_SAMPLER_DESC sampler = {};
@@ -185,27 +182,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     ComPtr<ID3D12PipelineState> pipelineState;
     hr = hvk::render::CreateGraphicsPipelineState(device, vertexLayout, rootSignature, vertexByteCode.data(), vertexByteCode.size(), pixelByteCode.data(), pixelByteCode.size(), pipelineState);
-    assert(SUCCEEDED(hr));
-
-    D3D12_DESCRIPTOR_RANGE lutRange = {};
-    lutRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-    lutRange.NumDescriptors = 1;
-    lutRange.BaseShaderRegister = 0;
-    lutRange.RegisterSpace = 0;
-    lutRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-    
-    D3D12_ROOT_PARAMETER lutParam = {};
-    lutParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    lutParam.DescriptorTable.NumDescriptorRanges = 1;
-    lutParam.DescriptorTable.pDescriptorRanges = &lutRange;
-    lutParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-    ComPtr<ID3D12RootSignature> lutSignature;
-    hr = hvk::render::CreateRootSignature(device, { lutParam }, {}, lutSignature);
-    assert(SUCCEEDED(hr));
-    
-    ComPtr<ID3D12PipelineState> lutPipelineState;
-    hr = hvk::render::CreateComputePipelineState(device, lutSignature, lutByteCode.data(), lutByteCode.size(), lutPipelineState);
     assert(SUCCEEDED(hr));
 
     ComPtr<ID3D12CommandAllocator> commandAllocator;
@@ -284,24 +260,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 #endif
 
     // generate color correction LUT
-    D3D12_UNORDERED_ACCESS_VIEW_DESC lutDesc = {};
-    lutDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    lutDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
-    lutDesc.Texture3D.MipSlice = 0;
-    lutDesc.Texture3D.WSize = 256;
-    lutDesc.Texture3D.FirstWSlice = 0;
-	auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
-    device->CreateUnorderedAccessView(colorCorrectionTex.Get(), nullptr, &lutDesc, uavHandle);
-    commandList->Reset(commandAllocator.Get(), lutPipelineState.Get());
-    commandList->SetComputeRootSignature(lutSignature.Get());
-    ID3D12DescriptorHeap* lutHeaps[] = { uavHeap.Get() };
-    commandList->SetDescriptorHeaps(_countof(lutHeaps), lutHeaps);
-    commandList->SetComputeRootDescriptorTable(0, uavHeap->GetGPUDescriptorHandleForHeapStart());
-    commandList->Dispatch(32, 32, 32);
-    commandList->Close();
-    ID3D12CommandList* lutLists[] = { commandList.Get() };
-    commandQueue->ExecuteCommandLists(1, lutLists);
-    hvk::render::WaitForGraphics(device, commandQueue);
+	commandList->Reset(commandAllocator.Get(), nullptr);
+	hr = hvk::bias::GenerateColorCorrectionLUT(device, commandList, commandQueue, uavHeap, colorCorrectionTex);
 
 #if defined(RENDERDOC)
         //rdoc_api->UnloadCrashHandler();
