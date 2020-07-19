@@ -272,6 +272,26 @@ namespace hvk
 			return hr;
 		}
 
+		HRESULT CreateComputePipelineState(
+			ComPtr<ID3D12Device> device, 
+			ComPtr<ID3D12RootSignature> rootSig,
+			const uint8_t* computeShader,
+			size_t computeShaderSize,
+			ComPtr<ID3D12PipelineState>& psOut)
+		{
+			auto hr = S_OK;
+
+			D3D12_COMPUTE_PIPELINE_STATE_DESC desc = {};
+			desc.CS = { computeShader, computeShaderSize };
+			desc.NodeMask = 0;
+			desc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+			desc.pRootSignature = rootSig.Get();
+
+			hr = device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&psOut));
+
+			return hr;
+		}
+
 		HRESULT CreateCommandList(
 			ComPtr<ID3D12Device> device,
 			ComPtr<ID3D12CommandAllocator> allocator,

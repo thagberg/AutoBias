@@ -171,5 +171,20 @@ namespace hvk
 
 			return hr;
 		}
+
+		bool LoadShaderByteCode(LPCWSTR filename, std::vector<uint8_t>& byteCodeOut)
+		{
+			DWORD codeSize;
+			DWORD bytesRead;
+
+			HANDLE shaderHandle = CreateFile2(filename, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, nullptr);
+			codeSize = GetFileSize(shaderHandle, nullptr);
+			byteCodeOut.resize(codeSize);
+			bool readSuccess = ReadFile(shaderHandle, byteCodeOut.data(), codeSize, &bytesRead, nullptr);
+			assert(readSuccess);
+			assert(bytesRead == codeSize);
+
+			return readSuccess && (bytesRead == codeSize);
+		}
 	}
 }
