@@ -68,5 +68,8 @@
     <FxCompile Include="..\shaders\vertex.hlsl">
       <Filter>Shaders</Filter>
     </FxCompile>
+    <FxCompile Include="..\shaders\generate_mips.hlsl">
+      <Filter>Shaders</Filter>
+    </FxCompile>
   </ItemGroup>
 </Project>

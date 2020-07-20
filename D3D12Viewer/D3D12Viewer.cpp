@@ -228,6 +228,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     assert(SUCCEEDED(hr));
 #endif
 
+    // generate color correction LUT
     ComPtr<ID3D12Resource> colorCorrectionTex;
     D3D12_HEAP_PROPERTIES ccHeap = {};
     ccHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -259,17 +260,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         rdoc_api->StartFrameCapture(device.Get(), window);
 #endif
 
-    // generate color correction LUT
 	commandList->Reset(commandAllocator.Get(), nullptr);
 	hr = hvk::bias::GenerateColorCorrectionLUT(device, commandList, commandQueue, uavHeap, colorCorrectionTex);
 
 #if defined(RENDERDOC)
-        //rdoc_api->UnloadCrashHandler();
-        auto rdocStatus = rdoc_api->IsFrameCapturing();
-        assert(rdocStatus == 1);
-        rdocStatus = rdoc_api->EndFrameCapture(device.Get(), window);
-        assert(rdocStatus == 1);
-        //rdoc_api->DiscardFrameCapture(device.Get(), window);
+        rdoc_api->EndFrameCapture(device.Get(), window);
 #endif
 
     MSG msg;
