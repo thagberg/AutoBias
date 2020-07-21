@@ -15,6 +15,24 @@ cbuffer Constants : register(b0)
 	uint SrcDimensions;
 }
 
+groupshared float gs_R[64];
+groupshared float gs_G[64];
+groupshared float gs_B[64];
+groupshared float gs_A[64];
+
+void StoreColor(uint index, float4 color)
+{
+	gs_R[index] = color.r;
+	gs_G[index] = color.g;
+	gs_B[index] = color.b;
+	gs_A[index] = color.a;
+}
+
+float4 LoadColor(uint index)
+{
+	return float4(gs_R[index], gs_G[index], gs_B[index], gs_A[index]);
+}
+
 [numthreads(8, 8, 1)]
 void main( uint GI : SV_GroupIndex, uint3 DTid : SV_DispatchThreadID )
 {
@@ -69,4 +87,64 @@ void main( uint GI : SV_GroupIndex, uint3 DTid : SV_DispatchThreadID )
 
 	// Write the color out to the first mip UAV
 	OutMip1[DTid.xy] = Src1;
+
+	if (NumMipLevels == 1)
+	{
+		return;
+	}
+
+	StoreColor(GI, Src1);
+
+	GroupMemoryBarrierWithGroupSync();
+
+	// only need 1/4 of the threads for the second mip level (even group threads only)
+	// GI.x and GI.y must both be even
+	if ((GI & 0x9) == 0)
+	{
+		float4 Src2 = LoadColor(GI + 0x01);
+		float4 Src3 = LoadColor(GI + 0x08);
+		float4 Src4 = LoadColor(GI + 0x09);
+		Src1 = 0.25 * (Src1 + Src2 + Src3 + Src4);
+
+		OutMip2[DTid.xy / 2] = Src1;
+		StoreColor(GI, Src1);
+	}
+
+	if (NumMipLevels == 2)
+	{
+		return;
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	// only need 1/4 again. GI.x and GI.y must be multiples of 4
+	if ((GI & 0x1B) == 0)
+	{
+		float4 Src2 = LoadColor(GI + 0x02);
+		float4 Src3 = LoadColor(GI + 0x10);
+		float4 Src4 = LoadColor(GI + 0x12);
+		Src1 = 0.25 * (Src1 + Src2 + Src3 + Src4);
+
+		OutMip3[DTid.xy / 4] = Src1;
+		StoreColor(GI, Src1);
+	}
+
+	if (NumMipLevels == 3)
+	{
+		return;
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	// only 1 thread for the final mip
+	if (GI == 0)
+	{
+		float4 Src2 = LoadColor(GI + 0x04);
+		float4 Src3 = LoadColor(GI + 0x20);
+		float4 Src4 = LoadColor(GI + 0x24);
+		Src1 = 0.25 * (Src1 + Src2 + Src3 + Src4);
+
+		OutMip4[DTid.xy / 8] = Src1;
+	}
+
 }

@@ -140,6 +140,7 @@ namespace hvk
 			ComPtr<ID3D12GraphicsCommandList> singleUse,
 			ComPtr<ID3D12CommandQueue> commandQueue,
 			ComPtr<ID3D12DescriptorHeap> uavHeap,
+			uint8_t numMips,
 			ComPtr<ID3D12Resource> sourceTexture,
 			ComPtr<ID3D12Resource> mippedTexture)
 		{
@@ -239,7 +240,7 @@ namespace hvk
 			D3D12_RANGE cbRange = { 0, 0 };
 			MipConstantBuffer* cbPtr;
 			constantBuffer->Map(0, &cbRange, reinterpret_cast<void**>(&cbPtr));
-			*cbPtr = MipConstantBuffer{ 0, 4, {1.f / 3440.f, 1.f / 1440.f}, 0 };
+			*cbPtr = MipConstantBuffer{ 0, numMips, {1.f / 1720.f, 1.f / 720.f}, 0 };
 			constantBuffer->Unmap(0, nullptr);
 
 			D3D12_CONSTANT_BUFFER_VIEW_DESC cb = {};

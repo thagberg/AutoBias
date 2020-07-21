@@ -360,7 +360,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 #endif
         // generate mipmaps for captured texture
 		commandList->Reset(commandAllocator.Get(), nullptr);
-		hr = hvk::bias::GenerateMips(device, commandList, commandQueue, uavHeap, d3d12Resource, mippedTexture);
+		hr = hvk::bias::GenerateMips(device, commandList, commandQueue, uavHeap, numMips, d3d12Resource, mippedTexture);
         assert(SUCCEEDED(hr));
 #if defined(RENDERDOC)
         rdoc_api->EndFrameCapture(device.Get(), window);
