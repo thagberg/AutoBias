@@ -1,11 +1,14 @@
 // D3D12Viewer.cpp : Defines the entry point for the application.
 //
 
+#define NOMINMAX 1
+
 #include "framework.h"
 #include "D3D12Viewer.h"
 
 #include <iostream>
 #include <memory>
+#include <algorithm>
 
 #include <d3d12.h>
 #include <dxgi1_2.h>
@@ -14,7 +17,7 @@
 #include <Render.h>
 #include "bias_util.h"
 
-//#define CAPTURE
+#define CAPTURE
 #if defined(CAPTURE)
 #include <CaptureManager.h>
 #endif
@@ -30,6 +33,8 @@ RENDERDOC_API_1_4_1* rdoc_api = nullptr;
 
 #define MAX_LOADSTRING 100
 
+const uint8_t kGridWidth = 8;
+const uint8_t kGridHeight = 5;
 const size_t kFramebuffers = 2;
 
 struct Vertex
@@ -257,7 +262,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     assert(SUCCEEDED(hr));
 
 #if defined(RENDERDOC)
-        rdoc_api->StartFrameCapture(device.Get(), window);
+	rdoc_api->StartFrameCapture(device.Get(), window);
 #endif
 
 	commandList->Reset(commandAllocator.Get(), nullptr);
@@ -266,6 +271,45 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 #if defined(RENDERDOC)
         rdoc_api->EndFrameCapture(device.Get(), window);
 #endif
+
+    // create resource for mipmapped texture
+    ComPtr<ID3D12Resource> mippedTexture;
+    uint32_t numMips = 0;
+    {
+        const float bucketDimension = 10.f;
+        const uint32_t maxX = desktopWidth / kGridWidth;
+        const uint32_t maxY = desktopHeight / kGridHeight;
+        const uint32_t xMips = static_cast<uint32_t>(std::floor(log2(desktopWidth / (bucketDimension * log2(maxX)))));
+        const uint32_t yMips = static_cast<uint32_t>(std::floor(log2(desktopHeight / (bucketDimension * log2(maxY)))));
+        numMips = std::min(xMips, yMips);
+    }
+    assert(numMips > 1);
+    ++numMips;
+
+    D3D12_RESOURCE_DESC mipTextureDesc = {};
+    mipTextureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    mipTextureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    mipTextureDesc.Alignment = 0;
+    mipTextureDesc.Width = 3440;
+    mipTextureDesc.Height = 1440;
+    mipTextureDesc.DepthOrArraySize = 1;
+    mipTextureDesc.MipLevels = numMips;
+    mipTextureDesc.SampleDesc.Count = 1;
+    mipTextureDesc.SampleDesc.Quality = 0;
+    mipTextureDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+    auto mipHeapProps = hvk::render::HeapPropertiesDefault();
+    hr = device->CreateCommittedResource(
+        &mipHeapProps, 
+        D3D12_HEAP_FLAG_NONE, 
+        &mipTextureDesc, 
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 
+        nullptr, 
+        IID_PPV_ARGS(&mippedTexture));
+    assert(SUCCEEDED(hr));
+
+
+    //------------- Application Loop ---------------
 
     MSG msg;
     bool running = true;
@@ -294,12 +338,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             desktopResource->Release();
         }
 
-        hr = commandAllocator->Reset();
-        assert(SUCCEEDED(hr));
-
-        hr = commandList->Reset(commandAllocator.Get(), pipelineState.Get());
-        assert(SUCCEEDED(hr));
-
         D3D12_RESOURCE_DESC resourceDesc = {};
 #if defined(CAPTURE)
         hr = hvk::bias::GetNextFrameResource(cm, &desktopResource);
@@ -316,6 +354,24 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 #else
         resourceDesc = d3d12Resource->GetDesc();
 #endif
+
+#if defined(RENDERDOC)
+	rdoc_api->StartFrameCapture(device.Get(), window);
+#endif
+        // generate mipmaps for captured texture
+		commandList->Reset(commandAllocator.Get(), nullptr);
+		hr = hvk::bias::GenerateMips(device, commandList, commandQueue, uavHeap, d3d12Resource, mippedTexture);
+        assert(SUCCEEDED(hr));
+#if defined(RENDERDOC)
+        rdoc_api->EndFrameCapture(device.Get(), window);
+#endif
+
+        hr = commandAllocator->Reset();
+        assert(SUCCEEDED(hr));
+
+        hr = commandList->Reset(commandAllocator.Get(), pipelineState.Get());
+        assert(SUCCEEDED(hr));
+
 
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;

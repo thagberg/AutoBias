@@ -385,5 +385,16 @@ namespace hvk
 
 			return hr;
 		}
+
+		D3D12_HEAP_PROPERTIES HeapPropertiesDefault()
+		{
+			D3D12_HEAP_PROPERTIES props = {};
+			props.Type = D3D12_HEAP_TYPE_DEFAULT;
+			props.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+			props.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+			props.CreationNodeMask = 1;
+			props.VisibleNodeMask = 1;
+			return props;
+		}
 	}
 }

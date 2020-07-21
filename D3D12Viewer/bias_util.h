@@ -17,6 +17,14 @@ namespace hvk
 {
 	namespace bias
 	{
+		struct MipConstantBuffer
+		{
+			uint32_t SrcMipLevel;
+			uint32_t NumMipLevels;
+			float TexelSize[2];
+			uint32_t SrcDimensions;
+		};
+
 		const size_t kMaxCaptureAttempts = 10;
 
 		bool LoadShaderByteCode(LPCWSTR filename, std::vector<uint8_t>& byteCodeOut)
@@ -123,6 +131,155 @@ namespace hvk
 			ID3D12CommandList* lutLists[] = { singleUse.Get() };
 			commandQueue->ExecuteCommandLists(1, lutLists);
 			hr = hvk::render::WaitForGraphics(device, commandQueue);
+
+			return hr;
+		}
+
+		HRESULT GenerateMips(
+			ComPtr<ID3D12Device> device,
+			ComPtr<ID3D12GraphicsCommandList> singleUse,
+			ComPtr<ID3D12CommandQueue> commandQueue,
+			ComPtr<ID3D12DescriptorHeap> uavHeap,
+			ComPtr<ID3D12Resource> sourceTexture,
+			ComPtr<ID3D12Resource> mippedTexture)
+		{
+			HRESULT hr = S_OK;
+
+			std::vector<uint8_t> mipByteCode;
+			bool shaderLoadSuccess = LoadShaderByteCode(L"shaders\\generate_mips.cso", mipByteCode);
+			assert(shaderLoadSuccess);
+
+			D3D12_DESCRIPTOR_RANGE mipUavRange = {};
+			mipUavRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+			mipUavRange.NumDescriptors = 4;
+			mipUavRange.BaseShaderRegister = 0;
+			mipUavRange.RegisterSpace = 0;
+			mipUavRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+			D3D12_DESCRIPTOR_RANGE mipCbRange = {};
+			mipCbRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
+			mipCbRange.NumDescriptors = 1;
+			mipCbRange.BaseShaderRegister = 0;
+			mipCbRange.RegisterSpace = 0;
+			mipCbRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+			D3D12_DESCRIPTOR_RANGE mipSrvRange = {};
+			mipSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+			mipSrvRange.NumDescriptors = 1;
+			mipSrvRange.BaseShaderRegister = 0;
+			mipSrvRange.RegisterSpace = 0;
+			mipSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+			D3D12_DESCRIPTOR_RANGE ranges[] = { mipUavRange, mipCbRange, mipSrvRange };
+
+			D3D12_ROOT_PARAMETER mipParam = {};
+			mipParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+			mipParam.DescriptorTable.NumDescriptorRanges = _countof(ranges);
+			mipParam.DescriptorTable.pDescriptorRanges = ranges;
+			mipParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+			D3D12_STATIC_SAMPLER_DESC bilinearSampler = {};
+			bilinearSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+			bilinearSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+			bilinearSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+			bilinearSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+			bilinearSampler.MipLODBias = 0.f;
+			bilinearSampler.MaxAnisotropy = 1;
+			bilinearSampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+			bilinearSampler.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+			bilinearSampler.MinLOD = 0;
+			bilinearSampler.MaxLOD = 0;
+			bilinearSampler.ShaderRegister = 0;
+			bilinearSampler.RegisterSpace = 0;
+			bilinearSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+			ComPtr<ID3D12RootSignature> rootSig;
+			hr = hvk::render::CreateRootSignature(device, { mipParam }, { bilinearSampler }, rootSig);
+			assert(SUCCEEDED(hr));
+
+			ComPtr<ID3D12PipelineState> mipPipelineState;
+			hr = hvk::render::CreateComputePipelineState(device, rootSig, mipByteCode.data(), mipByteCode.size(), mipPipelineState);
+			assert(SUCCEEDED(hr));
+
+			// create UAVs for each desired mip level
+			auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
+			std::vector<D3D12_UNORDERED_ACCESS_VIEW_DESC> mipUavs;
+			mipUavs.resize(4);
+			for (uint8_t i = 0; i < 4; ++i)
+			{
+				auto& uav = mipUavs[i];
+				uav.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+				uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+				uav.Texture2D.MipSlice = i+1;
+				device->CreateUnorderedAccessView(mippedTexture.Get(), nullptr, &uav, uavHandle);
+				uavHandle.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+			}
+
+			// create constant buffer for mip generation
+			ComPtr<ID3D12Resource> constantBuffer;
+			D3D12_RESOURCE_DESC cbDesc = {};
+			cbDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			cbDesc.Format = DXGI_FORMAT_UNKNOWN;
+			cbDesc.Alignment = 0;
+			cbDesc.Width = (sizeof(MipConstantBuffer) + 255) & ~255;
+			cbDesc.Height = 1;
+			cbDesc.DepthOrArraySize = 1;
+			cbDesc.MipLevels = 1;
+			cbDesc.SampleDesc.Count = 1;
+			cbDesc.SampleDesc.Quality = 0;
+			cbDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+			cbDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+			auto cbHeapProps = hvk::render::HeapPropertiesDefault();
+			cbHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+			hr = device->CreateCommittedResource(&cbHeapProps, D3D12_HEAP_FLAG_NONE, &cbDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&constantBuffer));
+			assert(SUCCEEDED(hr));
+
+			// fill CB
+			D3D12_RANGE cbRange = { 0, 0 };
+			MipConstantBuffer* cbPtr;
+			constantBuffer->Map(0, &cbRange, reinterpret_cast<void**>(&cbPtr));
+			*cbPtr = MipConstantBuffer{ 0, 4, {1.f / 3440.f, 1.f / 1440.f}, 0 };
+			constantBuffer->Unmap(0, nullptr);
+
+			D3D12_CONSTANT_BUFFER_VIEW_DESC cb = {};
+			cb.BufferLocation = constantBuffer->GetGPUVirtualAddress();
+			cb.SizeInBytes = (sizeof(MipConstantBuffer)+ 255) & ~255;
+			device->CreateConstantBufferView(&cb, uavHandle);
+			uavHandle.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+			// create SRV for source texture
+			D3D12_RESOURCE_DESC srcDesc = sourceTexture->GetDesc();
+			D3D12_SHADER_RESOURCE_VIEW_DESC srcViewDesc = {};
+			srcViewDesc.Format = srcDesc.Format;
+			srcViewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srcViewDesc.Texture2D.MipLevels = srcDesc.MipLevels;
+			srcViewDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			device->CreateShaderResourceView(sourceTexture.Get(), &srcViewDesc, uavHandle);
+			uavHandle.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+			// prepare for compute dispatch
+			singleUse->SetPipelineState(mipPipelineState.Get());
+			singleUse->SetComputeRootSignature(rootSig.Get());
+			ID3D12DescriptorHeap* mipHeaps[] = { uavHeap.Get() };
+			singleUse->SetDescriptorHeaps(_countof(mipHeaps), mipHeaps);
+			singleUse->SetComputeRootDescriptorTable(0, uavHeap->GetGPUDescriptorHandleForHeapStart());
+			singleUse->Dispatch(3440 / 8, 1440 / 8, 1);
+
+			// transition mips for SRV
+			D3D12_RESOURCE_BARRIER mipBarrier = {};
+			mipBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			mipBarrier.Transition.pResource = mippedTexture.Get();
+			mipBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			mipBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+			mipBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			singleUse->ResourceBarrier(1, &mipBarrier);
+
+			singleUse->Close();
+			ID3D12CommandList* mipLists[] = { singleUse.Get() };
+			commandQueue->ExecuteCommandLists(1, mipLists);
+			hr = hvk::render::WaitForGraphics(device, commandQueue);
+			assert(SUCCEEDED(hr));
 
 			return hr;
 		}
