@@ -317,6 +317,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     IDXGIResource* desktopResource = nullptr;
 
     uint8_t frameIndex = 0;
+    uint64_t frameCount = 0;
     while (running)
     {
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
@@ -356,14 +357,20 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 #endif
 
 #if defined(RENDERDOC)
-	rdoc_api->StartFrameCapture(device.Get(), window);
+        if (frameCount == 0)
+        {
+			rdoc_api->StartFrameCapture(device.Get(), window);
+        }
 #endif
         // generate mipmaps for captured texture
 		commandList->Reset(commandAllocator.Get(), nullptr);
 		hr = hvk::bias::GenerateMips(device, commandList, commandQueue, uavHeap, numMips, d3d12Resource, mippedTexture);
         assert(SUCCEEDED(hr));
 #if defined(RENDERDOC)
-        rdoc_api->EndFrameCapture(device.Get(), window);
+        if (frameCount == 0)
+        {
+			rdoc_api->EndFrameCapture(device.Get(), window);
+        }
 #endif
 
         hr = commandAllocator->Reset();
@@ -373,12 +380,23 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         assert(SUCCEEDED(hr));
 
 
+#if defined(RENDERDOC)
+        if (frameCount == 0)
+        {
+			rdoc_api->StartFrameCapture(device.Get(), window);
+        }
+#endif
+        D3D12_RESOURCE_DESC mippedDesc = mippedTexture->GetDesc();
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		srvDesc.Format = resourceDesc.Format;
+		//srvDesc.Format = resourceDesc.Format;
+		srvDesc.Format = mippedDesc.Format;
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Texture2D.MipLevels = 1;
-        auto resourcePtr = d3d12Resource.Get();
+		//srvDesc.Texture2D.MipLevels = 1;
+		srvDesc.Texture2D.MipLevels = mippedDesc.MipLevels;
+        srvDesc.Texture2D.MostDetailedMip = 0;
+        //auto resourcePtr = d3d12Resource.Get();
+        auto resourcePtr = mippedTexture.Get();
         auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
         device->CreateShaderResourceView(resourcePtr, &srvDesc, uavHandle);
 
@@ -399,6 +417,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         backbuffer.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
         backbuffer.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
         commandList->ResourceBarrier(1, &backbuffer);
+
+        // mip resource barrier
+        D3D12_RESOURCE_BARRIER mipBarrier = {};
+        mipBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        mipBarrier.Transition.pResource = mippedTexture.Get();
+        mipBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        mipBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        mipBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        commandList->ResourceBarrier(1, &mipBarrier);
 
         auto rtvHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
         auto descriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -440,7 +467,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             WaitForSingleObject(fenceEvent, INFINITE);
         }
 
+#if defined(RENDERDOC)
+        if (frameCount == 0)
+        {
+			rdoc_api->EndFrameCapture(device.Get(), window);
+        }
+#endif
+
         frameIndex = swapchain->GetCurrentBackBufferIndex();
+        ++frameCount;
         Sleep(16);
     }
 

@@ -202,6 +202,36 @@ namespace hvk
 			hr = hvk::render::CreateComputePipelineState(device, rootSig, mipByteCode.data(), mipByteCode.size(), mipPipelineState);
 			assert(SUCCEEDED(hr));
 
+			// copy the source texture to mip 0 of the mipmap resource
+			D3D12_RESOURCE_BARRIER preCpyBarrier = {};
+			preCpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			preCpyBarrier.Transition.pResource = mippedTexture.Get();
+			preCpyBarrier.Transition.Subresource = 0;
+			preCpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+			preCpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+			singleUse->ResourceBarrier(1, &preCpyBarrier);
+
+			D3D12_RESOURCE_DESC srcDesc = sourceTexture->GetDesc();
+			D3D12_TEXTURE_COPY_LOCATION cpySource = {};
+			cpySource.pResource = sourceTexture.Get();
+			cpySource.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+			uint64_t requiredSize = 0;
+			device->GetCopyableFootprints(&srcDesc, 0, 1, 0, &cpySource.PlacedFootprint, nullptr, nullptr, &requiredSize);
+
+			D3D12_TEXTURE_COPY_LOCATION cpyDest = {};
+			cpyDest.pResource = mippedTexture.Get();
+			cpyDest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+			cpyDest.SubresourceIndex = 0;
+			singleUse->CopyTextureRegion(&cpyDest, 0, 0, 0, &cpySource, nullptr);
+
+			D3D12_RESOURCE_BARRIER cpyBarrier = {};
+			cpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			cpyBarrier.Transition.pResource = mippedTexture.Get();
+			cpyBarrier.Transition.Subresource = 0;
+			cpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+			cpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+			singleUse->ResourceBarrier(1, &cpyBarrier);
+
 			// create UAVs for each desired mip level
 			auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
 			std::vector<D3D12_UNORDERED_ACCESS_VIEW_DESC> mipUavs;
@@ -250,7 +280,6 @@ namespace hvk
 			uavHandle.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 			// create SRV for source texture
-			D3D12_RESOURCE_DESC srcDesc = sourceTexture->GetDesc();
 			D3D12_SHADER_RESOURCE_VIEW_DESC srcViewDesc = {};
 			srcViewDesc.Format = srcDesc.Format;
 			srcViewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -375,13 +404,13 @@ namespace hvk
 			D3D12_TEXTURE_COPY_LOCATION cpySource = {};
 			cpySource.pResource = tempBuffer.Get();
 			cpySource.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-			cpySource.PlacedFootprint.Offset = 0;
-			cpySource.PlacedFootprint.Footprint.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-			cpySource.PlacedFootprint.Footprint.Width = 3440;
-			cpySource.PlacedFootprint.Footprint.Height = 1440;
-			cpySource.PlacedFootprint.Footprint.Depth = 1;
-			cpySource.PlacedFootprint.Footprint.RowPitch = 3440 * 4;
-			cpySource.PlacedFootprint.Footprint.RowPitch = Align(3440 * 4, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
+			//cpySource.PlacedFootprint.Offset = 0;
+			//cpySource.PlacedFootprint.Footprint.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+			//cpySource.PlacedFootprint.Footprint.Width = 3440;
+			//cpySource.PlacedFootprint.Footprint.Height = 1440;
+			//cpySource.PlacedFootprint.Footprint.Depth = 1;
+			//cpySource.PlacedFootprint.Footprint.RowPitch = 3440 * 4;
+			//cpySource.PlacedFootprint.Footprint.RowPitch = Align(3440 * 4, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
 
 			uint64_t requiredSize = 0;
 			device->GetCopyableFootprints(&resourceDesc, 0, 1, 0, &cpySource.PlacedFootprint, nullptr, nullptr, &requiredSize);
