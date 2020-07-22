@@ -163,7 +163,7 @@ namespace hvk
 			for (size_t i = 0; i < numRendertargets; ++i)
 			{
 				// TODO: provide D3D12_RENDER_TARGET_VIEW_DESC instead of nullptr
-				hr = swapchain->GetBuffer(i, IID_PPV_ARGS(&rtvOut[i]));
+				hr = swapchain->GetBuffer(static_cast<uint32_t>(i), IID_PPV_ARGS(&rtvOut[i]));
 				if (SUCCEEDED(hr))
 				{
 					device->CreateRenderTargetView(rtvOut[i].Get(), nullptr, rtvHandle);
@@ -314,7 +314,7 @@ namespace hvk
 			return hr;
 		}
 
-		D3D12_VERTEX_BUFFER_VIEW CreateVertexBuffer(ComPtr<ID3D12Device> device, const uint8_t* vbData, size_t vbSize, size_t stride, ComPtr<ID3D12Resource>& vbOut)
+		D3D12_VERTEX_BUFFER_VIEW CreateVertexBuffer(ComPtr<ID3D12Device> device, const uint8_t* vbData, uint32_t vbSize, uint32_t stride, ComPtr<ID3D12Resource>& vbOut)
 		{
 			auto hr = S_OK;
 

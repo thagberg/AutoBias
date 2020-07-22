@@ -153,8 +153,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     sampler.MaxAnisotropy = 1;
     sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
     sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
-    sampler.MinLOD = 0;
-    sampler.MaxLOD = 0;
+    sampler.MinLOD = 0.f;
+    sampler.MaxLOD = 100.f;
     sampler.ShaderRegister = 0;
     sampler.RegisterSpace = 0;
     sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -191,6 +191,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     ComPtr<ID3D12CommandAllocator> commandAllocator;
     hr = hvk::render::CreateCommandAllocator(device, commandAllocator);
+    assert(SUCCEEDED(hr));
+
+    ComPtr<ID3D12CommandAllocator> singleUseAllocator;
+    hr = hvk::render::CreateCommandAllocator(device, singleUseAllocator);
     assert(SUCCEEDED(hr));
 
     ComPtr<ID3D12GraphicsCommandList> commandList;
@@ -284,7 +288,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         numMips = std::min(xMips, yMips);
     }
     assert(numMips > 1);
-    ++numMips;
+    numMips += 2;
 
     D3D12_RESOURCE_DESC mipTextureDesc = {};
     mipTextureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -364,8 +368,75 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 #endif
         // generate mipmaps for captured texture
 		commandList->Reset(commandAllocator.Get(), nullptr);
-		hr = hvk::bias::GenerateMips(device, commandList, commandQueue, uavHeap, numMips, d3d12Resource, mippedTexture);
+
+		// copy the source texture to mip 0 of the mipmap resource
+		D3D12_RESOURCE_BARRIER preCpyBarrier = {};
+		preCpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		preCpyBarrier.Transition.pResource = mippedTexture.Get();
+		preCpyBarrier.Transition.Subresource = 0;
+		preCpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+		preCpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+		commandList->ResourceBarrier(1, &preCpyBarrier);
+
+		D3D12_RESOURCE_DESC srcDesc = d3d12Resource->GetDesc();
+		D3D12_TEXTURE_COPY_LOCATION cpySource = {};
+		cpySource.pResource = d3d12Resource.Get();
+		cpySource.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+		uint64_t requiredSize = 0;
+		device->GetCopyableFootprints(&srcDesc, 0, 1, 0, &cpySource.PlacedFootprint, nullptr, nullptr, &requiredSize);
+
+		D3D12_TEXTURE_COPY_LOCATION cpyDest = {};
+		cpyDest.pResource = mippedTexture.Get();
+		cpyDest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+		cpyDest.SubresourceIndex = 0;
+		commandList->CopyTextureRegion(&cpyDest, 0, 0, 0, &cpySource, nullptr);
+
+		D3D12_RESOURCE_BARRIER cpyBarrier = {};
+		cpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		cpyBarrier.Transition.pResource = mippedTexture.Get();
+		cpyBarrier.Transition.Subresource = 0;
+		cpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+		cpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+		commandList->ResourceBarrier(1, &cpyBarrier);
+
+        commandList->Close();
+        ID3D12CommandList* mipLists[] = { commandList.Get() };
+        commandQueue->ExecuteCommandLists(1, mipLists);
+        hr = hvk::render::WaitForGraphics(device, commandQueue);
         assert(SUCCEEDED(hr));
+
+        // don't need to generate the first mip as it's just the texture we'll copy
+        int mipsToGenerate = numMips-1;
+        uint8_t startingMip = 0;
+        while (mipsToGenerate > 0)
+        {
+            // create single-use command list
+			ComPtr<ID3D12GraphicsCommandList> singleUse;
+			hr = hvk::render::CreateCommandList(device, singleUseAllocator, nullptr, singleUse);
+			assert(SUCCEEDED(hr));
+
+            short passMips = std::min(mipsToGenerate, 4);
+			hr = hvk::bias::GenerateMips(device, singleUse, commandQueue, uavHeap, passMips, startingMip, d3d12Resource, mippedTexture);
+			assert(SUCCEEDED(hr));
+            mipsToGenerate -= 4;
+            startingMip += 4;
+        }
+
+		// transition mips for SRV
+		//D3D12_RESOURCE_BARRIER mipBarrier = {};
+		//mipBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		//mipBarrier.Transition.pResource = mippedTexture.Get();
+		//mipBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		//mipBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+		//mipBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		//commandList->ResourceBarrier(1, &mipBarrier);
+
+        //commandList->Close();
+        //ID3D12CommandList* mipLists[] = { commandList.Get() };
+        //commandQueue->ExecuteCommandLists(1, mipLists);
+        //hr = hvk::render::WaitForGraphics(device, commandQueue);
+        //assert(SUCCEEDED(hr));
+
 #if defined(RENDERDOC)
         if (frameCount == 0)
         {
@@ -379,13 +450,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         hr = commandList->Reset(commandAllocator.Get(), pipelineState.Get());
         assert(SUCCEEDED(hr));
 
-
-#if defined(RENDERDOC)
-        if (frameCount == 0)
-        {
-			rdoc_api->StartFrameCapture(device.Get(), window);
-        }
-#endif
         D3D12_RESOURCE_DESC mippedDesc = mippedTexture->GetDesc();
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -419,13 +483,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         commandList->ResourceBarrier(1, &backbuffer);
 
         // mip resource barrier
-        D3D12_RESOURCE_BARRIER mipBarrier = {};
-        mipBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        mipBarrier.Transition.pResource = mippedTexture.Get();
-        mipBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        mipBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-        mipBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-        commandList->ResourceBarrier(1, &mipBarrier);
+        //D3D12_RESOURCE_BARRIER mipBarrier = {};
+        //mipBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        //mipBarrier.Transition.pResource = mippedTexture.Get();
+        //mipBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        //mipBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        //mipBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        //commandList->ResourceBarrier(1, &mipBarrier);
 
         auto rtvHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
         auto descriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -467,16 +531,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             WaitForSingleObject(fenceEvent, INFINITE);
         }
 
-#if defined(RENDERDOC)
-        if (frameCount == 0)
-        {
-			rdoc_api->EndFrameCapture(device.Get(), window);
-        }
-#endif
-
         frameIndex = swapchain->GetCurrentBackBufferIndex();
         ++frameCount;
-        Sleep(16);
+        //Sleep(16);
     }
 
     return (int) msg.wParam;

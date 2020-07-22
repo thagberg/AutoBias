@@ -141,6 +141,7 @@ namespace hvk
 			ComPtr<ID3D12CommandQueue> commandQueue,
 			ComPtr<ID3D12DescriptorHeap> uavHeap,
 			uint8_t numMips,
+			uint8_t startingMip,
 			ComPtr<ID3D12Resource> sourceTexture,
 			ComPtr<ID3D12Resource> mippedTexture)
 		{
@@ -203,45 +204,46 @@ namespace hvk
 			assert(SUCCEEDED(hr));
 
 			// copy the source texture to mip 0 of the mipmap resource
-			D3D12_RESOURCE_BARRIER preCpyBarrier = {};
-			preCpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			preCpyBarrier.Transition.pResource = mippedTexture.Get();
-			preCpyBarrier.Transition.Subresource = 0;
-			preCpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-			preCpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-			singleUse->ResourceBarrier(1, &preCpyBarrier);
+			//D3D12_RESOURCE_BARRIER preCpyBarrier = {};
+			//preCpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			//preCpyBarrier.Transition.pResource = mippedTexture.Get();
+			//preCpyBarrier.Transition.Subresource = 0;
+			//preCpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+			//preCpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+			//singleUse->ResourceBarrier(1, &preCpyBarrier);
 
-			D3D12_RESOURCE_DESC srcDesc = sourceTexture->GetDesc();
-			D3D12_TEXTURE_COPY_LOCATION cpySource = {};
-			cpySource.pResource = sourceTexture.Get();
-			cpySource.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-			uint64_t requiredSize = 0;
-			device->GetCopyableFootprints(&srcDesc, 0, 1, 0, &cpySource.PlacedFootprint, nullptr, nullptr, &requiredSize);
+			//D3D12_RESOURCE_DESC srcDesc = sourceTexture->GetDesc();
+			//D3D12_TEXTURE_COPY_LOCATION cpySource = {};
+			//cpySource.pResource = sourceTexture.Get();
+			//cpySource.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+			//uint64_t requiredSize = 0;
+			//device->GetCopyableFootprints(&srcDesc, 0, 1, 0, &cpySource.PlacedFootprint, nullptr, nullptr, &requiredSize);
 
-			D3D12_TEXTURE_COPY_LOCATION cpyDest = {};
-			cpyDest.pResource = mippedTexture.Get();
-			cpyDest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-			cpyDest.SubresourceIndex = 0;
-			singleUse->CopyTextureRegion(&cpyDest, 0, 0, 0, &cpySource, nullptr);
+			//D3D12_TEXTURE_COPY_LOCATION cpyDest = {};
+			//cpyDest.pResource = mippedTexture.Get();
+			//cpyDest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+			//cpyDest.SubresourceIndex = 0;
+			//singleUse->CopyTextureRegion(&cpyDest, 0, 0, 0, &cpySource, nullptr);
 
-			D3D12_RESOURCE_BARRIER cpyBarrier = {};
-			cpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			cpyBarrier.Transition.pResource = mippedTexture.Get();
-			cpyBarrier.Transition.Subresource = 0;
-			cpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-			cpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-			singleUse->ResourceBarrier(1, &cpyBarrier);
+			//D3D12_RESOURCE_BARRIER cpyBarrier = {};
+			//cpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			//cpyBarrier.Transition.pResource = mippedTexture.Get();
+			//cpyBarrier.Transition.Subresource = 0;
+			//cpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+			//cpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+			//singleUse->ResourceBarrier(1, &cpyBarrier);
 
 			// create UAVs for each desired mip level
 			auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
 			std::vector<D3D12_UNORDERED_ACCESS_VIEW_DESC> mipUavs;
-			mipUavs.resize(4);
-			for (uint8_t i = 0; i < 4; ++i)
+			mipUavs.resize(numMips);
+			for (uint8_t i = 0; i < numMips; ++i)
 			{
+				auto mipLevel = startingMip + i;
 				auto& uav = mipUavs[i];
 				uav.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 				uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-				uav.Texture2D.MipSlice = i+1;
+				uav.Texture2D.MipSlice = mipLevel+1;
 				device->CreateUnorderedAccessView(mippedTexture.Get(), nullptr, &uav, uavHandle);
 				uavHandle.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 			}
@@ -280,6 +282,7 @@ namespace hvk
 			uavHandle.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 			// create SRV for source texture
+			D3D12_RESOURCE_DESC srcDesc = sourceTexture->GetDesc();
 			D3D12_SHADER_RESOURCE_VIEW_DESC srcViewDesc = {};
 			srcViewDesc.Format = srcDesc.Format;
 			srcViewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -297,13 +300,13 @@ namespace hvk
 			singleUse->Dispatch(3440 / 8, 1440 / 8, 1);
 
 			// transition mips for SRV
-			D3D12_RESOURCE_BARRIER mipBarrier = {};
-			mipBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			mipBarrier.Transition.pResource = mippedTexture.Get();
-			mipBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-			mipBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-			mipBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-			singleUse->ResourceBarrier(1, &mipBarrier);
+			//D3D12_RESOURCE_BARRIER mipBarrier = {};
+			//mipBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			//mipBarrier.Transition.pResource = mippedTexture.Get();
+			//mipBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			//mipBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+			//mipBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			//singleUse->ResourceBarrier(1, &mipBarrier);
 
 			singleUse->Close();
 			ID3D12CommandList* mipLists[] = { singleUse.Get() };

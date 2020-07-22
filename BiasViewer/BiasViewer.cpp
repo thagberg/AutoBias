@@ -174,7 +174,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     assert(SUCCEEDED(hr));
 
     CaptureManager cm;
-    hr = cm.Init(device, dxgiAdapter);
+    hr = cm.Init();
     assert(hr == S_OK);
 
     // initialize Arduino Control
@@ -473,7 +473,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             {
                 Sleep(100);
 				cm = CaptureManager();
-				hr = cm.Init(device, dxgiAdapter);
+				hr = cm.Init();
                 if (hr != S_OK)
                 {
                     ++numRetries;
