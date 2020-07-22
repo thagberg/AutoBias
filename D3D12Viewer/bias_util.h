@@ -203,36 +203,6 @@ namespace hvk
 			hr = hvk::render::CreateComputePipelineState(device, rootSig, mipByteCode.data(), mipByteCode.size(), mipPipelineState);
 			assert(SUCCEEDED(hr));
 
-			// copy the source texture to mip 0 of the mipmap resource
-			//D3D12_RESOURCE_BARRIER preCpyBarrier = {};
-			//preCpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			//preCpyBarrier.Transition.pResource = mippedTexture.Get();
-			//preCpyBarrier.Transition.Subresource = 0;
-			//preCpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-			//preCpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-			//singleUse->ResourceBarrier(1, &preCpyBarrier);
-
-			//D3D12_RESOURCE_DESC srcDesc = sourceTexture->GetDesc();
-			//D3D12_TEXTURE_COPY_LOCATION cpySource = {};
-			//cpySource.pResource = sourceTexture.Get();
-			//cpySource.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-			//uint64_t requiredSize = 0;
-			//device->GetCopyableFootprints(&srcDesc, 0, 1, 0, &cpySource.PlacedFootprint, nullptr, nullptr, &requiredSize);
-
-			//D3D12_TEXTURE_COPY_LOCATION cpyDest = {};
-			//cpyDest.pResource = mippedTexture.Get();
-			//cpyDest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-			//cpyDest.SubresourceIndex = 0;
-			//singleUse->CopyTextureRegion(&cpyDest, 0, 0, 0, &cpySource, nullptr);
-
-			//D3D12_RESOURCE_BARRIER cpyBarrier = {};
-			//cpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			//cpyBarrier.Transition.pResource = mippedTexture.Get();
-			//cpyBarrier.Transition.Subresource = 0;
-			//cpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-			//cpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-			//singleUse->ResourceBarrier(1, &cpyBarrier);
-
 			// create UAVs for each desired mip level
 			auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
 			std::vector<D3D12_UNORDERED_ACCESS_VIEW_DESC> mipUavs;
@@ -439,6 +409,90 @@ namespace hvk
 			commandQueue->ExecuteCommandLists(1, copyList);
 
 			hr = render::WaitForGraphics(device, commandQueue);
+
+			return hr;
+		}
+
+		HRESULT GenerateLuminanceMap(
+			ComPtr<ID3D12Device> device,
+			ComPtr<ID3D12GraphicsCommandList> singleUse,
+			ComPtr<ID3D12CommandQueue> commandQueue,
+			ComPtr<ID3D12DescriptorHeap> uavHeap,
+			ComPtr<ID3D12Resource> sourceTexture,
+			ComPtr<ID3D12Resource> luminanceTexture)
+		{
+			HRESULT hr = S_OK;
+
+			std::vector<uint8_t> luminanceByteCode;
+			bool shaderLoadSuccess = LoadShaderByteCode(L"shaders\\luminance.cso", luminanceByteCode);
+			assert(shaderLoadSuccess);
+
+			auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
+
+			D3D12_DESCRIPTOR_RANGE lumSrvRange = {};
+			lumSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+			lumSrvRange.NumDescriptors = 1;
+			lumSrvRange.BaseShaderRegister = 0;
+			lumSrvRange.RegisterSpace = 0;
+			lumSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+			D3D12_DESCRIPTOR_RANGE lumUavRange = {};
+			lumUavRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+			lumUavRange.NumDescriptors = 1;
+			lumUavRange.BaseShaderRegister = 0;
+			lumUavRange.RegisterSpace = 0;
+			lumUavRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+			D3D12_DESCRIPTOR_RANGE ranges[] = { lumSrvRange, lumUavRange };
+
+			D3D12_ROOT_PARAMETER lumParam = {};
+			lumParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+			lumParam.DescriptorTable.NumDescriptorRanges = _countof(ranges);
+			lumParam.DescriptorTable.pDescriptorRanges = ranges;
+			lumParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+			ComPtr<ID3D12RootSignature> rootSig;
+			hr = hvk::render::CreateRootSignature(device, { lumParam }, {}, rootSig);
+			assert(SUCCEEDED(hr));
+
+			ComPtr<ID3D12PipelineState> lumPipelineState;
+			hr = hvk::render::CreateComputePipelineState(device, rootSig, luminanceByteCode.data(), luminanceByteCode.size(), lumPipelineState);
+			assert(SUCCEEDED(hr));
+
+			// create SRV for source texture
+			D3D12_RESOURCE_DESC srcDesc = sourceTexture->GetDesc();
+			D3D12_SHADER_RESOURCE_VIEW_DESC srcViewDesc = {};
+			srcViewDesc.Format = srcDesc.Format;
+			srcViewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			//srcViewDesc.Texture2D.MipLevels = srcDesc.MipLevels;
+			srcViewDesc.Texture2D.MipLevels = 1;
+			srcViewDesc.Texture2D.MostDetailedMip = 4;
+			srcViewDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			device->CreateShaderResourceView(sourceTexture.Get(), &srcViewDesc, uavHandle);
+			uavHandle.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+			// create UAV for luminance texture
+			D3D12_UNORDERED_ACCESS_VIEW_DESC lumUav = {};
+			lumUav.Format = DXGI_FORMAT_A8_UNORM;
+			lumUav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+			lumUav.Texture2D.MipSlice = 0;
+			device->CreateUnorderedAccessView(luminanceTexture.Get(), nullptr, &lumUav, uavHandle);
+			uavHandle.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+
+			// prepare for compute dispatch
+			singleUse->SetPipelineState(lumPipelineState.Get());
+			singleUse->SetComputeRootSignature(rootSig.Get());
+			ID3D12DescriptorHeap* lumHeaps[] = { uavHeap.Get() };
+			singleUse->SetDescriptorHeaps(_countof(lumHeaps), lumHeaps);
+			singleUse->SetComputeRootDescriptorTable(0, uavHeap->GetGPUDescriptorHandleForHeapStart());
+			singleUse->Dispatch(srcDesc.Width/8, srcDesc.Height/8, 1);
+
+			singleUse->Close();
+			ID3D12CommandList* lumLists[] = { singleUse.Get() };
+			commandQueue->ExecuteCommandLists(1, lumLists);
+			hr = hvk::render::WaitForGraphics(device, commandQueue);
+			assert(SUCCEEDED(hr));
 
 			return hr;
 		}

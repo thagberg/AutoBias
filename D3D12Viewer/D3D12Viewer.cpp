@@ -202,6 +202,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     assert(SUCCEEDED(hr));
     commandList->Close();
 
+	// create single-use command list
+	ComPtr<ID3D12GraphicsCommandList> singleUse;
+	hr = hvk::render::CreateCommandList(device, singleUseAllocator, nullptr, singleUse);
+	assert(SUCCEEDED(hr));
+    singleUse->Close();
+
     ComPtr<ID3D12Resource> rendertargets[kFramebuffers];
     hr = hvk::render::CreateRenderTargetView(device, swapchain, rtvHeap, kFramebuffers, rendertargets);
     assert(SUCCEEDED(hr));
@@ -294,8 +300,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     mipTextureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     mipTextureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     mipTextureDesc.Alignment = 0;
-    mipTextureDesc.Width = 3440;
-    mipTextureDesc.Height = 1440;
+    mipTextureDesc.Width = desktopWidth;
+    mipTextureDesc.Height = desktopHeight;
     mipTextureDesc.DepthOrArraySize = 1;
     mipTextureDesc.MipLevels = numMips;
     mipTextureDesc.SampleDesc.Count = 1;
@@ -310,6 +316,30 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 
         nullptr, 
         IID_PPV_ARGS(&mippedTexture));
+    assert(SUCCEEDED(hr));
+
+    // create resource for luminance texture
+    ComPtr<ID3D12Resource> luminanceTexture;
+    D3D12_RESOURCE_DESC lumTextureDesc = {};
+    lumTextureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    lumTextureDesc.Format = DXGI_FORMAT_A8_UNORM;
+    lumTextureDesc.Alignment = 0;
+    lumTextureDesc.Width = desktopWidth >> (numMips-1);
+    lumTextureDesc.Height = desktopHeight >> (numMips-1);
+    lumTextureDesc.DepthOrArraySize = 1;
+    lumTextureDesc.MipLevels = 1;
+    lumTextureDesc.SampleDesc.Count = 1;
+    lumTextureDesc.SampleDesc.Quality = 0;
+    lumTextureDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+    auto lumHeapProps = hvk::render::HeapPropertiesDefault();
+    hr = device->CreateCommittedResource(
+        &lumHeapProps,
+        D3D12_HEAP_FLAG_NONE,
+        &lumTextureDesc,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        nullptr,
+        IID_PPV_ARGS(&luminanceTexture));
     assert(SUCCEEDED(hr));
 
 
@@ -410,11 +440,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         uint8_t startingMip = 0;
         while (mipsToGenerate > 0)
         {
-            // create single-use command list
-			ComPtr<ID3D12GraphicsCommandList> singleUse;
-			hr = hvk::render::CreateCommandList(device, singleUseAllocator, nullptr, singleUse);
-			assert(SUCCEEDED(hr));
-
+            singleUse->Reset(singleUseAllocator.Get(), nullptr);
             short passMips = std::min(mipsToGenerate, 4);
 			hr = hvk::bias::GenerateMips(device, singleUse, commandQueue, uavHeap, passMips, startingMip, d3d12Resource, mippedTexture);
 			assert(SUCCEEDED(hr));
@@ -422,20 +448,24 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             startingMip += 4;
         }
 
-		// transition mips for SRV
-		//D3D12_RESOURCE_BARRIER mipBarrier = {};
-		//mipBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		//mipBarrier.Transition.pResource = mippedTexture.Get();
-		//mipBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		//mipBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-		//mipBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		//commandList->ResourceBarrier(1, &mipBarrier);
+#if defined(RENDERDOC)
+        if (frameCount == 0)
+        {
+			rdoc_api->EndFrameCapture(device.Get(), window);
+        }
+#endif
 
-        //commandList->Close();
-        //ID3D12CommandList* mipLists[] = { commandList.Get() };
-        //commandQueue->ExecuteCommandLists(1, mipLists);
-        //hr = hvk::render::WaitForGraphics(device, commandQueue);
-        //assert(SUCCEEDED(hr));
+#if defined(RENDERDOC)
+        if (frameCount == 0)
+        {
+			rdoc_api->StartFrameCapture(device.Get(), window);
+        }
+#endif
+
+        // generate average luminance
+        singleUse->Reset(singleUseAllocator.Get(), nullptr);
+        hr = hvk::bias::GenerateLuminanceMap(device, singleUse, commandQueue, uavHeap, mippedTexture, luminanceTexture);
+        assert(SUCCEEDED(hr));
 
 #if defined(RENDERDOC)
         if (frameCount == 0)
@@ -453,13 +483,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         D3D12_RESOURCE_DESC mippedDesc = mippedTexture->GetDesc();
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		//srvDesc.Format = resourceDesc.Format;
 		srvDesc.Format = mippedDesc.Format;
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		//srvDesc.Texture2D.MipLevels = 1;
 		srvDesc.Texture2D.MipLevels = mippedDesc.MipLevels;
         srvDesc.Texture2D.MostDetailedMip = 0;
-        //auto resourcePtr = d3d12Resource.Get();
         auto resourcePtr = mippedTexture.Get();
         auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
         device->CreateShaderResourceView(resourcePtr, &srvDesc, uavHandle);
