@@ -4,6 +4,7 @@
 
 struct IDXGIAdapter1;
 struct IDXGIOutput5;
+struct IDXGIOutputDuplication;
 
 class CaptureManager
 {

@@ -33,9 +33,18 @@
     <ClInclude Include="bias_util.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="MipGenerator.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="D3D12Viewer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MipGenerator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="bias_util.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
