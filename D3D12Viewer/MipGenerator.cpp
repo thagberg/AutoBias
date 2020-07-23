@@ -84,10 +84,13 @@ namespace hvk
 			cbDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 			cbDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
-			auto cbHeapProps = hvk::render::HeapPropertiesDefault();
-			cbHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-			hr = mDevice->CreateCommittedResource(&cbHeapProps, D3D12_HEAP_FLAG_NONE, &cbDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&mConstantBuffer));
-			assert(SUCCEEDED(hr));
+			for (auto& cb : mConstantBuffers)
+			{
+				auto cbHeapProps = hvk::render::HeapPropertiesDefault();
+				cbHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+				hr = mDevice->CreateCommittedResource(&cbHeapProps, D3D12_HEAP_FLAG_NONE, &cbDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&cb));
+				assert(SUCCEEDED(hr));
+			}
 		}
 
 		HRESULT MipGenerator::Generate(
@@ -131,13 +134,29 @@ namespace hvk
 			cpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 			commandList->ResourceBarrier(1, &cpyBarrier);
 
-			auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
 			// don't need to generate the first mip as it's just the texture we'll copy
-			int mipsToGenerate = numMips;
+			uint32_t mipsToGenerate = numMips;
+			auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
+			auto initialGpuHandle = uavHeap->GetGPUDescriptorHandleForHeapStart();
+			auto gpuHandle = initialGpuHandle;
+
+			std::vector<ComPtr<ID3D12DescriptorHeap>> passHeaps;
 			// can only process 4 mips per dispatch, break them into multiple passes if necessary
+			size_t passNum = 0;
 			while (mipsToGenerate > 0)
 			{
-				short passMips = std::min(mipsToGenerate, 4);
+				uint32_t passMips = std::min(mipsToGenerate, (uint32_t)4);
+
+				// create descriptor heap for each pass... this is probably dumb
+				passHeaps.push_back(ComPtr<ID3D12DescriptorHeap>());
+				auto& passHeap = passHeaps[passNum];
+				D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+				heapDesc.NumDescriptors = 7;
+				heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+				heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+				hr = mDevice->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&passHeap));
+				assert(SUCCEEDED(hr));
+				auto heapHandle = passHeap->GetCPUDescriptorHandleForHeapStart();
 
 				// create UAVs for each desired mip level
 				std::vector<D3D12_UNORDERED_ACCESS_VIEW_DESC> mipUavs;
@@ -149,8 +168,21 @@ namespace hvk
 					uav.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 					uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
 					uav.Texture2D.MipSlice = mipLevel+1;
-					mDevice->CreateUnorderedAccessView(mippedTexture.Get(), nullptr, &uav, uavHandle);
-					uavHandle.ptr += mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+					uav.Texture2D.PlaneSlice = 0;
+					mDevice->CreateUnorderedAccessView(mippedTexture.Get(), nullptr, &uav, heapHandle);
+					heapHandle.ptr += mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+				}
+				uint8_t nullMips = 4 - passMips;
+				while (nullMips > 0)
+				{
+					--nullMips;
+					D3D12_UNORDERED_ACCESS_VIEW_DESC nullUav;
+					nullUav.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+					nullUav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+					nullUav.Texture2D.MipSlice = 0;
+					nullUav.Texture2D.PlaneSlice = 0;
+					mDevice->CreateUnorderedAccessView(nullptr, nullptr, &nullUav, heapHandle);
+					heapHandle.ptr += mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 				}
 
 				// create SRV for source texture
@@ -160,35 +192,37 @@ namespace hvk
 				srcViewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 				srcViewDesc.Texture2D.MipLevels = srcDesc.MipLevels;
 				srcViewDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-				mDevice->CreateShaderResourceView(sourceTexture.Get(), &srcViewDesc, uavHandle);
-				uavHandle.ptr += mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+				mDevice->CreateShaderResourceView(sourceTexture.Get(), &srcViewDesc, heapHandle);
+				heapHandle.ptr += mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 				// fill CB
+				assert(passNum < mConstantBuffers.size());
+				auto& passCb = mConstantBuffers[passNum];
 				D3D12_RANGE cbRange = { 0, 0 };
 				MipConstantBuffer* cbPtr;
-				mConstantBuffer->Map(0, &cbRange, reinterpret_cast<void**>(&cbPtr));
-				*cbPtr = MipConstantBuffer{ 0, numMips, { 1.f / (srcDesc.Width >> (startingMip+1)), 1.f / (srcDesc.Height >> (startingMip+1)) }, 0 };
-				mConstantBuffer->Unmap(0, nullptr);
+				hr = passCb->Map(0, &cbRange, reinterpret_cast<void**>(&cbPtr));
+				assert(SUCCEEDED(hr));
+				*cbPtr = MipConstantBuffer{ 0, passMips, { 1.f / (srcDesc.Width >> (startingMip+1)), 1.f / (srcDesc.Height >> (startingMip+1)) }, 0 };
+				passCb->Unmap(0, nullptr);
 
 				D3D12_CONSTANT_BUFFER_VIEW_DESC cb = {};
-				cb.BufferLocation = mConstantBuffer->GetGPUVirtualAddress();
+				cb.BufferLocation = passCb->GetGPUVirtualAddress();
 				cb.SizeInBytes = (sizeof(MipConstantBuffer)+ 255) & ~255;
-				mDevice->CreateConstantBufferView(&cb, uavHandle);
-				uavHandle.ptr += mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+				mDevice->CreateConstantBufferView(&cb, heapHandle);
+				heapHandle.ptr += mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 				// prepare for compute dispatch
-				//auto gpuHandle = uavHeap->GetGPUDescriptorHandleForHeapStart();
-				//gpuHandle.ptr += mDevice->Get
 				commandList->SetPipelineState(mPipelineState.Get());
 				commandList->SetComputeRootSignature(mRootSig.Get());
-				ID3D12DescriptorHeap* mipHeaps[] = { uavHeap.Get() };
+				ID3D12DescriptorHeap* mipHeaps[] = { passHeap.Get() };
 				commandList->SetDescriptorHeaps(_countof(mipHeaps), mipHeaps);
-				commandList->SetComputeRootDescriptorTable(0, uavHeap->GetGPUDescriptorHandleForHeapStart());
+				commandList->SetComputeRootDescriptorTable(0, passHeap->GetGPUDescriptorHandleForHeapStart());
 				commandList->Dispatch((srcDesc.Width >> startingMip) / 8, (srcDesc.Height >> startingMip) / 8, 1);
 
 				// get ready for the next pass
-				mipsToGenerate -= 4;
-				startingMip += 4;
+				mipsToGenerate -= passMips;
+				startingMip += passMips;
+				++passNum;
 			}
 
 			commandList->Close();

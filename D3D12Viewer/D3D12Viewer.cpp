@@ -25,7 +25,7 @@
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 
-#define RENDERDOC
+//#define RENDERDOC
 #if defined(RENDERDOC)
 #include "renderdoc_app.h"
 RENDERDOC_API_1_4_1* rdoc_api = nullptr;

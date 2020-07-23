@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bias_util.h"
+#include <array>
 
 namespace hvk
 {
@@ -31,7 +32,7 @@ namespace hvk
 			ComPtr<ID3D12Device> mDevice;
 			ComPtr<ID3D12RootSignature> mRootSig;
 			ComPtr<ID3D12PipelineState> mPipelineState;
-			ComPtr<ID3D12Resource> mConstantBuffer;
+			std::array<ComPtr<ID3D12Resource>, 4> mConstantBuffers;
 		};
 	}
 }
