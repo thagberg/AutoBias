@@ -7,6 +7,8 @@ namespace hvk
 {
 	namespace d3d12
 	{
+		const size_t kMaxPasses = 4;
+
 		struct MipConstantBuffer
 		{
 			uint32_t SrcMipLevel;
@@ -32,7 +34,8 @@ namespace hvk
 			ComPtr<ID3D12Device> mDevice;
 			ComPtr<ID3D12RootSignature> mRootSig;
 			ComPtr<ID3D12PipelineState> mPipelineState;
-			std::array<ComPtr<ID3D12Resource>, 4> mConstantBuffers;
+			std::array<ComPtr<ID3D12Resource>, kMaxPasses> mConstantBuffers;
+			std::array<ComPtr<ID3D12DescriptorHeap>, kMaxPasses> mDescriptorHeaps;
 		};
 	}
 }

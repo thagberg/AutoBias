@@ -91,6 +91,18 @@ namespace hvk
 				hr = mDevice->CreateCommittedResource(&cbHeapProps, D3D12_HEAP_FLAG_NONE, &cbDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&cb));
 				assert(SUCCEEDED(hr));
 			}
+
+			// create descriptor heap for each pass
+			D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+			heapDesc.NumDescriptors = 7;
+			heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+			heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+			for (auto& dh : mDescriptorHeaps)
+			{
+				hr = mDevice->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&dh));
+				assert(SUCCEEDED(hr));
+			}
 		}
 
 		HRESULT MipGenerator::Generate(
@@ -136,27 +148,17 @@ namespace hvk
 
 			// don't need to generate the first mip as it's just the texture we'll copy
 			uint32_t mipsToGenerate = numMips;
-			auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
-			auto initialGpuHandle = uavHeap->GetGPUDescriptorHandleForHeapStart();
-			auto gpuHandle = initialGpuHandle;
 
-			std::vector<ComPtr<ID3D12DescriptorHeap>> passHeaps;
 			// can only process 4 mips per dispatch, break them into multiple passes if necessary
 			size_t passNum = 0;
 			while (mipsToGenerate > 0)
 			{
+				const auto& passHeap = mDescriptorHeaps[passNum];
+				auto heapHandle = passHeap->GetCPUDescriptorHandleForHeapStart();
+				auto gpuHandle = passHeap->GetGPUDescriptorHandleForHeapStart();
+
 				uint32_t passMips = std::min(mipsToGenerate, (uint32_t)4);
 
-				// create descriptor heap for each pass... this is probably dumb
-				passHeaps.push_back(ComPtr<ID3D12DescriptorHeap>());
-				auto& passHeap = passHeaps[passNum];
-				D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-				heapDesc.NumDescriptors = 7;
-				heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-				heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-				hr = mDevice->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&passHeap));
-				assert(SUCCEEDED(hr));
-				auto heapHandle = passHeap->GetCPUDescriptorHandleForHeapStart();
 
 				// create UAVs for each desired mip level
 				std::vector<D3D12_UNORDERED_ACCESS_VIEW_DESC> mipUavs;
@@ -216,7 +218,7 @@ namespace hvk
 				commandList->SetComputeRootSignature(mRootSig.Get());
 				ID3D12DescriptorHeap* mipHeaps[] = { passHeap.Get() };
 				commandList->SetDescriptorHeaps(_countof(mipHeaps), mipHeaps);
-				commandList->SetComputeRootDescriptorTable(0, passHeap->GetGPUDescriptorHandleForHeapStart());
+				commandList->SetComputeRootDescriptorTable(0, gpuHandle);
 				commandList->Dispatch((srcDesc.Width >> startingMip) / 8, (srcDesc.Height >> startingMip) / 8, 1);
 
 				// get ready for the next pass
