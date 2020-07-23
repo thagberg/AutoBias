@@ -16,6 +16,7 @@
 #include <Render.h>
 #include "bias_util.h"
 #include "MipGenerator.h"
+#include "LuminanceGenerator.h"
 
 #define CAPTURE
 #if defined(CAPTURE)
@@ -344,6 +345,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         IID_PPV_ARGS(&luminanceTexture));
     assert(SUCCEEDED(hr));
 
+    hvk::d3d12::LuminanceGenerator luminanceGenerator(device);
+
 
     //------------- Application Loop ---------------
 
@@ -400,57 +403,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 #endif
         // generate mipmaps for captured texture
 		commandList->Reset(commandAllocator.Get(), nullptr);
-        mipGenerator.Generate(commandList, commandQueue, uavHeap, numMips - 1, 0, d3d12Resource, mippedTexture);
-
-
-		//// copy the source texture to mip 0 of the mipmap resource
-		//D3D12_RESOURCE_BARRIER preCpyBarrier = {};
-		//preCpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		//preCpyBarrier.Transition.pResource = mippedTexture.Get();
-		//preCpyBarrier.Transition.Subresource = 0;
-		//preCpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-		//preCpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-		//commandList->ResourceBarrier(1, &preCpyBarrier);
-
-		//D3D12_RESOURCE_DESC srcDesc = d3d12Resource->GetDesc();
-		//D3D12_TEXTURE_COPY_LOCATION cpySource = {};
-		//cpySource.pResource = d3d12Resource.Get();
-		//cpySource.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-		//uint64_t requiredSize = 0;
-		//device->GetCopyableFootprints(&srcDesc, 0, 1, 0, &cpySource.PlacedFootprint, nullptr, nullptr, &requiredSize);
-
-		//D3D12_TEXTURE_COPY_LOCATION cpyDest = {};
-		//cpyDest.pResource = mippedTexture.Get();
-		//cpyDest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-		//cpyDest.SubresourceIndex = 0;
-		//commandList->CopyTextureRegion(&cpyDest, 0, 0, 0, &cpySource, nullptr);
-
-		//D3D12_RESOURCE_BARRIER cpyBarrier = {};
-		//cpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		//cpyBarrier.Transition.pResource = mippedTexture.Get();
-		//cpyBarrier.Transition.Subresource = 0;
-		//cpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-		//cpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-		//commandList->ResourceBarrier(1, &cpyBarrier);
-
-  //      commandList->Close();
-  //      ID3D12CommandList* mipLists[] = { commandList.Get() };
-  //      commandQueue->ExecuteCommandLists(1, mipLists);
-  //      hr = hvk::render::WaitForGraphics(device, commandQueue);
-  //      assert(SUCCEEDED(hr));
-
-  //      // don't need to generate the first mip as it's just the texture we'll copy
-  //      int mipsToGenerate = numMips-1;
-  //      uint8_t startingMip = 0;
-  //      while (mipsToGenerate > 0)
-  //      {
-  //          singleUse->Reset(singleUseAllocator.Get(), nullptr);
-  //          short passMips = std::min(mipsToGenerate, 4);
-		//	hr = hvk::bias::GenerateMips(device, singleUse, commandQueue, uavHeap, passMips, startingMip, d3d12Resource, mippedTexture);
-		//	assert(SUCCEEDED(hr));
-  //          mipsToGenerate -= 4;
-  //          startingMip += 4;
-  //      }
+        hr = mipGenerator.Generate(commandList, commandQueue, uavHeap, numMips - 1, 0, d3d12Resource, mippedTexture);
+        assert(SUCCEEDED(hr));
 
 #if defined(RENDERDOC)
         if (frameCount == 0)
@@ -467,8 +421,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 #endif
 
         // generate average luminance
-        singleUse->Reset(singleUseAllocator.Get(), nullptr);
-        hr = hvk::bias::GenerateLuminanceMap(device, singleUse, commandQueue, uavHeap, mippedTexture, luminanceTexture);
+        commandList->Reset(commandAllocator.Get(), nullptr);
+        hr = luminanceGenerator.Generate(commandList, commandQueue, mippedTexture, numMips - 1, luminanceTexture);
         assert(SUCCEEDED(hr));
 
 #if defined(RENDERDOC)
