@@ -17,6 +17,7 @@
 #include "bias_util.h"
 #include "MipGenerator.h"
 #include "LuminanceGenerator.h"
+#include "LEDGenerator.h"
 
 #define CAPTURE
 #if defined(CAPTURE)
@@ -287,15 +288,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     ComPtr<ID3D12Resource> mippedTexture;
     uint32_t numMips = 0;
     {
-        const float bucketDimension = 10.f;
-        const uint32_t maxX = desktopWidth / kGridWidth;
-        const uint32_t maxY = desktopHeight / kGridHeight;
-        const uint32_t xMips = static_cast<uint32_t>(std::floor(log2(desktopWidth / (bucketDimension * log2(maxX)))));
-        const uint32_t yMips = static_cast<uint32_t>(std::floor(log2(desktopHeight / (bucketDimension * log2(maxY)))));
+        const float bucketDimension = 8.f;
+        const float maxX = kGridWidth * bucketDimension;
+        const float maxY = kGridHeight * bucketDimension;
+
+        const auto xMips = static_cast<uint32_t>(std::ceil(log2(desktopWidth / maxX)));
+        const auto yMips = static_cast<uint32_t>(std::ceil(log2(desktopHeight / maxY)));
         numMips = std::min(xMips, yMips);
     }
     assert(numMips > 1);
-    numMips += 2;
+    numMips += 1;
 
     D3D12_RESOURCE_DESC mipTextureDesc = {};
     mipTextureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -346,6 +348,32 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     assert(SUCCEEDED(hr));
 
     hvk::d3d12::LuminanceGenerator luminanceGenerator(device);
+
+    // LED generator
+    ComPtr<ID3D12Resource> ledTexture;
+    D3D12_RESOURCE_DESC ledDesc = {};
+    ledDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    ledDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    ledDesc.Alignment = 0;
+    ledDesc.Width = kGridWidth;
+    ledDesc.Height = kGridHeight;
+    ledDesc.DepthOrArraySize = 1;
+    ledDesc.MipLevels = 1;
+    ledDesc.SampleDesc.Count = 1;
+    ledDesc.SampleDesc.Quality = 0;
+    ledDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+    auto ledHeapProps = hvk::render::HeapPropertiesDefault();
+    hr = device->CreateCommittedResource(
+        &ledHeapProps,
+        D3D12_HEAP_FLAG_NONE,
+        &ledDesc,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        nullptr,
+        IID_PPV_ARGS(&ledTexture));
+    assert(SUCCEEDED(hr));
+
+    hvk::d3d12::LEDGenerator ledGenerator(device);
 
 
     //------------- Application Loop ---------------
@@ -423,6 +451,24 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         // generate average luminance
         commandList->Reset(commandAllocator.Get(), nullptr);
         hr = luminanceGenerator.Generate(commandList, commandQueue, mippedTexture, numMips - 1, luminanceTexture);
+        assert(SUCCEEDED(hr));
+
+#if defined(RENDERDOC)
+        if (frameCount == 0)
+        {
+			rdoc_api->EndFrameCapture(device.Get(), window);
+        }
+#endif
+
+#if defined(RENDERDOC)
+        if (frameCount == 0)
+        {
+			rdoc_api->StartFrameCapture(device.Get(), window);
+        }
+#endif
+        // generate LED colors
+        commandList->Reset(commandAllocator.Get(), nullptr);
+        hr = ledGenerator.Generate(commandList, commandQueue, mippedTexture, numMips - 1, ledTexture);
         assert(SUCCEEDED(hr));
 
 #if defined(RENDERDOC)
