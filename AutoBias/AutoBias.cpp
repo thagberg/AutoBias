@@ -192,6 +192,9 @@ namespace hvk
 		{
 			HRESULT hr = S_OK;
 
+			hr = mCommandAllocator->Reset();
+			assert(SUCCEEDED(hr));
+
 			// generate mipmaps
 			mCommandList->Reset(mCommandAllocator.Get(), nullptr);
 			hr = mMipGenerator.Generate(mCommandList, mCommandQueue, mNumMips - 1, 0, surface, mMipmappedSurface);
