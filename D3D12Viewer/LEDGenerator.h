@@ -15,7 +15,11 @@ namespace hvk
 				ComPtr<ID3D12CommandQueue> commandQueue,
 				ComPtr<ID3D12Resource> sourceTexture,
 				uint32_t sourceMip,
-				ComPtr<ID3D12Resource> ledTexture);
+				uint32_t ledWidth,
+				uint32_t ledHeight,
+				ComPtr<ID3D12Resource> ledTexture,
+				ComPtr<ID3D12Resource> colorCorrectionTexture,
+				ComPtr<ID3D12Resource> ledCopyBuffer);
 
 		private:
 			ComPtr<ID3D12Device> mDevice;

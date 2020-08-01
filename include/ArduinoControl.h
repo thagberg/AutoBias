@@ -64,7 +64,7 @@ namespace hvk
 			, mDeviceConnected(false)
 			, mIOThread()
 			, mBufferMutex()
-			, mDisplayReady(true)
+			, mDisplayReady(false)
 		{
 			ZeroMemory(mReadBuffer, 256);
 
@@ -81,9 +81,11 @@ namespace hvk
 			mDeviceReady = false;
 			mDeviceConnected = false;
 
-			CancelIo(mCommHandle);
+			auto success = CancelIo(mCommHandle);
+			assert(success);
 			mIOThread.join();
-			CloseHandle(mCommHandle);
+			success = CloseHandle(mCommHandle);
+			assert(success);
 		}
 
 		template <uint8_t W, uint8_t H>
@@ -113,10 +115,12 @@ namespace hvk
 				return -2;
 			}
 
-			mDcb.BaudRate = CBR_9600;
+			mDcb.BaudRate = CBR_38400;
 			mDcb.ByteSize = 8;
 			mDcb.Parity = NOPARITY;
 			mDcb.StopBits = ONESTOPBIT;
+			mDcb.fRtsControl = RTS_CONTROL_ENABLE;
+			mDcb.fDtrControl = DTR_CONTROL_ENABLE;
 			success = SetCommState(mCommHandle, &mDcb);
 			assert(success);
 			if (!success)
@@ -129,6 +133,19 @@ namespace hvk
 			if (!success)
 			{
 				return -4;
+			}
+
+			COMMTIMEOUTS timeouts = {};
+			timeouts.ReadTotalTimeoutConstant = 1000;
+			timeouts.ReadIntervalTimeout = 0;
+			timeouts.ReadTotalTimeoutMultiplier = 1;
+			timeouts.WriteTotalTimeoutConstant = 1000;
+			timeouts.WriteTotalTimeoutMultiplier = 1;
+			success = SetCommTimeouts(mCommHandle, &timeouts);
+			assert(success);
+			if (!success)
+			{
+				return -5;
 			}
 
 			mDeviceConnected = true;
@@ -144,10 +161,6 @@ namespace hvk
 		{
 			while (mDeviceConnected)
 			{
-				DWORD numBytesRead;
-				bool readSuccess = ReadFile(mCommHandle, mReadBuffer, 1, &numBytesRead, nullptr);
-				assert(readSuccess);
-
 				if (mDisplayReady)
 				{
 					mDisplayReady = false;
@@ -169,6 +182,10 @@ namespace hvk
 					DWORD numBytesWritten;
 					bool writeSuccess = WriteFile(mCommHandle, frontbuffer.buffer.data(), sizeof(Color) * numPixelsToWrite, &numBytesWritten, nullptr);
 					assert(writeSuccess);
+
+					DWORD numBytesRead;
+					bool readSuccess = ReadFile(mCommHandle, mReadBuffer, 1, &numBytesRead, nullptr);
+					assert(readSuccess);
 				}
 
 				Sleep(16);

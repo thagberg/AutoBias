@@ -1,9 +1,11 @@
 Texture2D<unorm float4> SrcTex : register(t0);
-RWTexture2D<unorm float4> LEDOut : register(u0);
+Texture3D<unorm float4> CorrectionTex : register(t1);
+RWBuffer<unorm float4> LEDOut : register(u0);
 SamplerState Bilinear : register(s0);
 
 cbuffer Constants : register(b0)
 {
+	uint3 DispatchSize;
 	float2 TexelSize;
 }
 
@@ -64,14 +66,18 @@ void main( uint2 GroupID : SV_GroupID, uint2 GTid : SV_GroupThreadID, uint GI : 
 		float3 FinalColor = float3(0, 0, 0);
 		FinalColor += LoadColor(GI);
 		FinalColor += LoadColor(GI + 8);
-		FinalColor += LoadColor(GI + (8*2));
-		FinalColor += LoadColor(GI + (8*3));
-		FinalColor += LoadColor(GI + (8*4));
-		FinalColor += LoadColor(GI + (8*5));
-		FinalColor += LoadColor(GI + (8*6));
-		FinalColor += LoadColor(GI + (8*7));
+		FinalColor += LoadColor(GI + (8 * 2));
+		FinalColor += LoadColor(GI + (8 * 3));
+		FinalColor += LoadColor(GI + (8 * 4));
+		FinalColor += LoadColor(GI + (8 * 5));
+		FinalColor += LoadColor(GI + (8 * 6));
+		FinalColor += LoadColor(GI + (8 * 7));
 		FinalColor *= 0.125;
 
-		LEDOut[GroupID.xy] = float4(FinalColor.rgb, 1.0);
+		float3 CorrectionUV = FinalColor.rgb;
+		float4 CorrectedColor = CorrectionTex.SampleLevel(Bilinear, CorrectionUV, 0);
+
+		uint writeIndex = GroupID.y * DispatchSize.x + GroupID.x;
+		LEDOut[writeIndex] = float4(CorrectedColor.rgb, 1.0);
 	}
 }

@@ -377,7 +377,8 @@ namespace hvk
 			if (SUCCEEDED(hr))
 			{
 				auto fenceEvent = CreateEvent(nullptr, false, false, nullptr);
-				if (fence->GetCompletedValue() != fenceValue)
+				auto completedVal = fence->GetCompletedValue();
+				if (completedVal != fenceValue)
 				{
 					hr = fence->SetEventOnCompletion(fenceValue, fenceEvent);
 					assert(SUCCEEDED(hr));
