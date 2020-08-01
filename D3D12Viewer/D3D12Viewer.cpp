@@ -14,19 +14,11 @@
 #include <DirectXMath.h>
 
 #include <Render.h>
-#include "bias_util.h"
-#include "MipGenerator.h"
-#include "LuminanceGenerator.h"
-#include "LEDGenerator.h"
+#include <AutoBias.h>
 
 #define CAPTURE
 #if defined(CAPTURE)
 #include <CaptureManager.h>
-#endif
-
-#define ARDUINO
-#if defined(ARDUINO)
-#include <ArduinoControl.h>
 #endif
 
 #pragma comment(lib, "d3d12.lib")
@@ -63,7 +55,28 @@ const Vertex kVertices[kNumVertices] =
 };
 
 // TODO: mask should either be from file or another runtime input
-const int kLedMask[] = {
+//const int kLedMask[] = {
+//    -1, -1, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, -1, -1,
+//    -1, 45, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 22, -1,
+//    46, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 21,
+//    47, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 20,
+//    48, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 19,
+//    49, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 18,
+//    50, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 17,
+//    51, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 16,
+//    52, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 15,
+//    53, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 14,
+//    54, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 13,
+//    55, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 12,
+//    56, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 11,
+//    57, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 10,
+//    58, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  9,
+//    59, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  8,
+//    -1, 60, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  7, -1,
+//    -1, -1, 61, 62, 63, 64, 65, 66, 67, -1, -1, -1, -1, -1, -1, -1, -1,  0,  1,  2,  3,  4,  5,  6, -1, -1
+//};
+
+const std::vector<int> kLedMask = {
     -1, -1, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, -1, -1,
     -1, 45, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 22, -1,
     46, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 21,
@@ -281,152 +294,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     assert(SUCCEEDED(hr));
 #endif
 
-    // generate color correction LUT
-    ComPtr<ID3D12Resource> colorCorrectionTex;
-    D3D12_HEAP_PROPERTIES ccHeap = {};
-    ccHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
-    ccHeap.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-    ccHeap.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-    ccHeap.CreationNodeMask = 1;
-    ccHeap.VisibleNodeMask = 1;
-
-    D3D12_RESOURCE_DESC ccDesc = {};
-    ccDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    ccDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D;
-    ccDesc.MipLevels = 1;
-    ccDesc.Width = 256;
-    ccDesc.Height = 256;
-    ccDesc.DepthOrArraySize = 256;
-    ccDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-    ccDesc.SampleDesc.Count = 1;
-    ccDesc.SampleDesc.Quality = 0;
-    hr = device->CreateCommittedResource(
-        &ccHeap, 
-        D3D12_HEAP_FLAG_NONE, 
-        &ccDesc, 
-        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 
-        nullptr, 
-        IID_PPV_ARGS(&colorCorrectionTex));
-    assert(SUCCEEDED(hr));
-
-#if defined(RENDERDOC)
-	rdoc_api->StartFrameCapture(device.Get(), window);
-#endif
-
-	commandList->Reset(commandAllocator.Get(), nullptr);
-	hr = hvk::bias::GenerateColorCorrectionLUT(device, commandList, commandQueue, uavHeap, colorCorrectionTex);
-
-#if defined(RENDERDOC)
-        rdoc_api->EndFrameCapture(device.Get(), window);
-#endif
-
-    // create resource for mipmapped texture
-    ComPtr<ID3D12Resource> mippedTexture;
-    uint32_t numMips = 0;
-    {
-        const float bucketDimension = 8.f;
-        const float maxX = kGridWidth * bucketDimension;
-        const float maxY = kGridHeight * bucketDimension;
-
-        const auto xMips = static_cast<uint32_t>(std::ceil(log2(desktopWidth / maxX)));
-        const auto yMips = static_cast<uint32_t>(std::ceil(log2(desktopHeight / maxY)));
-        numMips = std::min(xMips, yMips);
-    }
-    assert(numMips > 1);
-    numMips += 1;
-
-    D3D12_RESOURCE_DESC mipTextureDesc = {};
-    mipTextureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    mipTextureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    mipTextureDesc.Alignment = 0;
-    mipTextureDesc.Width = desktopWidth;
-    mipTextureDesc.Height = desktopHeight;
-    mipTextureDesc.DepthOrArraySize = 1;
-    mipTextureDesc.MipLevels = numMips;
-    mipTextureDesc.SampleDesc.Count = 1;
-    mipTextureDesc.SampleDesc.Quality = 0;
-    mipTextureDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-
-    auto mipHeapProps = hvk::render::HeapPropertiesDefault();
-    hr = device->CreateCommittedResource(
-        &mipHeapProps, 
-        D3D12_HEAP_FLAG_NONE, 
-        &mipTextureDesc, 
-        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 
-        nullptr, 
-        IID_PPV_ARGS(&mippedTexture));
-    assert(SUCCEEDED(hr));
-
-    hvk::d3d12::MipGenerator mipGenerator(device);
-
-    // create resource for luminance texture
-    ComPtr<ID3D12Resource> luminanceTexture;
-    D3D12_RESOURCE_DESC lumTextureDesc = {};
-    lumTextureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    lumTextureDesc.Format = DXGI_FORMAT_A8_UNORM;
-    lumTextureDesc.Alignment = 0;
-    lumTextureDesc.Width = desktopWidth >> (numMips-1);
-    lumTextureDesc.Height = desktopHeight >> (numMips-1);
-    lumTextureDesc.DepthOrArraySize = 1;
-    lumTextureDesc.MipLevels = 1;
-    lumTextureDesc.SampleDesc.Count = 1;
-    lumTextureDesc.SampleDesc.Quality = 0;
-    lumTextureDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-
-    auto lumHeapProps = hvk::render::HeapPropertiesDefault();
-    hr = device->CreateCommittedResource(
-        &lumHeapProps,
-        D3D12_HEAP_FLAG_NONE,
-        &lumTextureDesc,
-        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-        nullptr,
-        IID_PPV_ARGS(&luminanceTexture));
-    assert(SUCCEEDED(hr));
-
-    hvk::d3d12::LuminanceGenerator luminanceGenerator(device);
-
-    // LED generator
-    ComPtr<ID3D12Resource> ledBuffer;
-    D3D12_RESOURCE_DESC ledDesc = {};
-    ledDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    ledDesc.Format = DXGI_FORMAT_UNKNOWN;
-    ledDesc.Alignment = 0;
-    ledDesc.Width = kGridWidth * kGridHeight * 4;
-    ledDesc.Height = 1;
-    ledDesc.DepthOrArraySize = 1;
-    ledDesc.MipLevels = 1;
-    ledDesc.SampleDesc.Count = 1;
-    ledDesc.SampleDesc.Quality = 0;
-    ledDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    ledDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-
-    auto ledHeapProps = hvk::render::HeapPropertiesDefault();
-    hr = device->CreateCommittedResource(
-        &ledHeapProps,
-        D3D12_HEAP_FLAG_NONE,
-        &ledDesc,
-        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-        nullptr,
-        IID_PPV_ARGS(&ledBuffer));
-    assert(SUCCEEDED(hr));
-
-    ComPtr<ID3D12Resource> ledCopy;
-    D3D12_RESOURCE_DESC ledCopyDesc = ledDesc;
-    ledCopyDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
-    ledCopyDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-    auto ledCopyHeapProps = hvk::render::HeapPropertiesDefault();
-    ledCopyHeapProps.Type = D3D12_HEAP_TYPE_READBACK;
-    hr = device->CreateCommittedResource(
-        &ledCopyHeapProps,
-        D3D12_HEAP_FLAG_NONE,
-        &ledCopyDesc,
-        D3D12_RESOURCE_STATE_COPY_DEST,
-        nullptr,
-        IID_PPV_ARGS(&ledCopy));
-    assert(SUCCEEDED(hr));
-
-    hvk::d3d12::LEDGenerator ledGenerator(device);
-
     // create LED preview texture
     ComPtr<ID3D12Resource> previewTexture;
 
@@ -456,23 +323,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         IID_PPV_ARGS(&previewTexture));
     assert(SUCCEEDED(hr));
 
-#if defined(ARDUINO)
-    // initialize Arduino controller
-    //hvk::control::ArduinoController<kGridWidth, kGridHeight> ac;
-    hvk::control::ArduinoController<34, 2> ac;
-    ac.Init();
-
-    size_t numLeds = 0;
-    for (const auto m : kLedMask)
-    {
-        if (m >= 0)
-        {
-            ++numLeds;
-        }
-    }
-    std::array<hvk::Color, 68> ledColors;
-    assert(numLeds == ledColors.size());
-#endif
+    // create AutoBias
+    hvk::bias::AutoBias ab(device, kGridWidth, kGridHeight, kLedMask, desktopWidth, desktopHeight);
 
     //------------- Application Loop ---------------
 
@@ -506,8 +358,34 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
         D3D12_RESOURCE_DESC resourceDesc = {};
 #if defined(CAPTURE)
-        hr = hvk::bias::GetNextFrameResource(cm, &desktopResource);
-        assert(SUCCEEDED(hr));
+        //hr = hvk::bias::GetNextFrameResource(cm, &desktopResource);
+		hr = cm.AcquireFrameAsDXGIResource(&desktopResource);
+		if (!SUCCEEDED(hr))
+		{
+			uint8_t numRetries = 0;
+			while (numRetries < 10)
+			{
+				++numRetries;
+				Sleep(200);
+				//cm = CaptureManager();
+				//hr = cm.Init();
+				if (SUCCEEDED(hr))
+				{
+					hr = cm.AcquireFrameAsDXGIResource(&desktopResource);
+					if (SUCCEEDED(hr))
+					{
+						break;
+					}
+				}
+			}
+		}
+        // If we keep failing to acquire the desktop image, the user might be
+        // in a UAC prompt, Ctrl+Alt+Del, etc., so just skip the rest of this frame
+        // and try again later
+        if (!SUCCEEDED(hr))
+        {
+            continue;
+        }
 
         IDXGIResource1* sharedResource;
         desktopResource->QueryInterface<IDXGIResource1>(&sharedResource);
@@ -515,204 +393,20 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         sharedResource->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &hTexture);
         device->OpenSharedHandle(hTexture, IID_PPV_ARGS(&d3d12Resource));
         resourceDesc = d3d12Resource->GetDesc();
-        //desktopResource->Release();
-        //cm.ReleaseFrame();
 #else
         resourceDesc = d3d12Resource->GetDesc();
 #endif
 
 #if defined(RENDERDOC)
-        if (frameCount == 0)
-        {
-			rdoc_api->StartFrameCapture(device.Get(), window);
-        }
+        rdoc_api->StartFrameCapture(device.Get(), window);
 #endif
-        // generate mipmaps for captured texture
-		commandList->Reset(commandAllocator.Get(), nullptr);
-        hr = mipGenerator.Generate(commandList, commandQueue, uavHeap, numMips - 1, 0, d3d12Resource, mippedTexture);
-        assert(SUCCEEDED(hr));
+
+        ab.Update(d3d12Resource);
 
 #if defined(RENDERDOC)
-        if (frameCount == 0)
-        {
-			rdoc_api->EndFrameCapture(device.Get(), window);
-        }
+        rdoc_api->EndFrameCapture(device.Get(), window);
 #endif
 
-#if defined(RENDERDOC)
-        if (frameCount == 0)
-        {
-			rdoc_api->StartFrameCapture(device.Get(), window);
-        }
-#endif
-
-        // generate average luminance
-        commandList->Reset(commandAllocator.Get(), nullptr);
-        hr = luminanceGenerator.Generate(commandList, commandQueue, mippedTexture, numMips - 1, luminanceTexture);
-        assert(SUCCEEDED(hr));
-
-#if defined(RENDERDOC)
-        if (frameCount == 0)
-        {
-			rdoc_api->EndFrameCapture(device.Get(), window);
-        }
-#endif
-
-#if defined(RENDERDOC)
-        if (frameCount == 0)
-        {
-			rdoc_api->StartFrameCapture(device.Get(), window);
-        }
-#endif
-        // generate LED colors
-        commandList->Reset(commandAllocator.Get(), nullptr);
-        hr = ledGenerator.Generate(
-            commandList, 
-            commandQueue, 
-            mippedTexture, 
-            numMips - 1, 
-            kGridWidth, 
-            kGridHeight, 
-            ledBuffer, 
-            colorCorrectionTex, 
-            ledCopy);
-        assert(SUCCEEDED(hr));
-
-#if defined(RENDERDOC)
-        if (frameCount == 0)
-        {
-			rdoc_api->EndFrameCapture(device.Get(), window);
-        }
-#endif
-
-#if defined(ARDUINO)
-        size_t ledSize = kGridHeight * kGridWidth * 4;
-        D3D12_RANGE ledRange = { 0, ledSize };
-        uint8_t* ledPtr;
-        ledCopy->Map(0, &ledRange, reinterpret_cast<void**>(&ledPtr));
-
-        // first set LED colors to write to microcontroller
-        size_t bufferIndex = 0;
-        for (size_t bufferIndex = 0; bufferIndex < ledSize; bufferIndex += 4)
-        {
-            auto ledIndex = kLedMask[bufferIndex / 4];
-            if (ledIndex >= 0)
-            {
-                hvk::Color c = {
-                    ledPtr[bufferIndex],
-                    ledPtr[bufferIndex + 1],
-                    ledPtr[bufferIndex + 2]
-                };
-                ledColors[ledIndex] = c;
-            }
-        }
-
-#if defined(RENDERDOC)
-        if (frameCount == 0)
-        {
-			rdoc_api->StartFrameCapture(device.Get(), window);
-        }
-#endif
-        // then copy LED buffer to preview texture
-        commandList->Reset(commandAllocator.Get(), nullptr);
-
-        D3D12_HEAP_PROPERTIES intrHeap = {};
-        intrHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
-        intrHeap.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-        intrHeap.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-        intrHeap.CreationNodeMask = 1;
-        intrHeap.VisibleNodeMask = 1;
-
-        ComPtr<ID3D12Resource> intr;
-        D3D12_RESOURCE_DESC intrDesc = {};
-        intrDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        intrDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
-        intrDesc.Width = Align(kGridWidth * 4, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) * kGridHeight;
-        intrDesc.Height = 1;
-        intrDesc.DepthOrArraySize = 1;
-        intrDesc.MipLevels = 1;
-        intrDesc.Format = DXGI_FORMAT_UNKNOWN;
-        intrDesc.SampleDesc.Count = 1;
-        intrDesc.SampleDesc.Quality = 0;
-        intrDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        intrDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-
-        device->CreateCommittedResource(
-            &intrHeap,
-            D3D12_HEAP_FLAG_NONE,
-            &intrDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            IID_PPV_ARGS(&intr));
-
-        uint8_t* intrData;
-        intr->Map(0, nullptr, reinterpret_cast<void**>(&intrData));
-        uint8_t* writeAt = intrData;
-        for (size_t ledY = 0; ledY < kGridHeight; ++ledY)
-        {
-            for (size_t ledX = 0; ledX < kGridWidth; ++ledX)
-            {
-                uint8_t sourceOffset = (ledY * kGridWidth * 4) + ledX * 4;
-                writeAt[0] = ledPtr[sourceOffset];
-                writeAt[1] = ledPtr[sourceOffset + 1];
-                writeAt[2] = ledPtr[sourceOffset + 2];
-                writeAt[3] = ledPtr[sourceOffset + 3];
-                writeAt += 4;
-            }
-            writeAt += (D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - (kGridWidth*4));
-        }
-        intr->Unmap(0, nullptr);
-
-        D3D12_TEXTURE_COPY_LOCATION previewSrc = {};
-        previewSrc.pResource = intr.Get();
-        previewSrc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-
-        uint64_t requiredSize = 0;
-        device->GetCopyableFootprints(&previewTexture->GetDesc(), 0, 1, 0, &previewSrc.PlacedFootprint, nullptr, nullptr, &requiredSize);
-
-        D3D12_RESOURCE_BARRIER cpyBarrier = {};
-        cpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        cpyBarrier.Transition.pResource = previewTexture.Get();
-        cpyBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        cpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-        cpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-        commandList->ResourceBarrier(1, &cpyBarrier);
-
-    
-        D3D12_TEXTURE_COPY_LOCATION previewDest = {};
-        previewDest.pResource = previewTexture.Get();
-        previewDest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        previewDest.SubresourceIndex = 0;
-        commandList->CopyTextureRegion(&previewDest, 0, 0, 0, &previewSrc, nullptr);
-
-
-        D3D12_RESOURCE_BARRIER previewBarrier = {};
-        previewBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        previewBarrier.Transition.pResource = previewTexture.Get();
-        previewBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        previewBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-        previewBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-        commandList->ResourceBarrier(1, &previewBarrier);
-        commandList->Close();
-        ID3D12CommandList* previewList[] = { commandList.Get() };
-        commandQueue->ExecuteCommandLists(1, previewList);
-        hvk::render::WaitForGraphics(device, commandQueue);
-
-#if defined(RENDERDOC)
-        if (frameCount == 0)
-        {
-			rdoc_api->EndFrameCapture(device.Get(), window);
-        }
-#endif
-
-
-
-        ledCopy->Unmap(0, nullptr);
-        ac.WritePixels(ledColors);
-#endif
-
-        hr = commandAllocator->Reset();
-        assert(SUCCEEDED(hr));
 
         hr = commandList->Reset(commandAllocator.Get(), pipelineState.Get());
         assert(SUCCEEDED(hr));
@@ -727,8 +421,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		//srvDesc.Texture2D.MipLevels = mippedDesc.MipLevels;
 		srvDesc.Texture2D.MipLevels = 1;
         srvDesc.Texture2D.MostDetailedMip = 0;
-        //auto resourcePtr = mippedTexture.Get();
-        auto resourcePtr = previewTexture.Get();
+        auto resourcePtr = d3d12Resource.Get();
         auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
         device->CreateShaderResourceView(resourcePtr, &srvDesc, uavHandle);
 

@@ -16,24 +16,27 @@
     <Filter Include="Shaders">
       <UniqueIdentifier>{bfa563bc-d4ce-4d42-ba48-9a2a7c3104b0}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\Generators">
-      <UniqueIdentifier>{188389c1-59b3-45af-b83a-0301820a5250}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Header Files\Generators">
-      <UniqueIdentifier>{4a1dda40-76ca-4827-894b-05318ccd8583}</UniqueIdentifier>
+      <UniqueIdentifier>{a888ea53-dc38-4767-afd0-eb1465a4d878}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Generators">
+      <UniqueIdentifier>{66989a5c-7c71-47ec-a0dd-2b8de99c987f}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AutoBias.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\generators\LEDGenerator.cpp">
+    <ClCompile Include="bias_util.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="generators\LEDGenerator.cpp">
       <Filter>Source Files\Generators</Filter>
     </ClCompile>
-    <ClCompile Include="..\generators\LuminanceGenerator.cpp">
+    <ClCompile Include="generators\LuminanceGenerator.cpp">
       <Filter>Source Files\Generators</Filter>
     </ClCompile>
-    <ClCompile Include="..\generators\MipGenerator.cpp">
+    <ClCompile Include="generators\MipGenerator.cpp">
       <Filter>Source Files\Generators</Filter>
     </ClCompile>
   </ItemGroup>
@@ -41,17 +44,17 @@
     <ClInclude Include="AutoBias.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\generators\LEDGenerator.h">
-      <Filter>Header Files\Generators</Filter>
-    </ClInclude>
-    <ClInclude Include="..\generators\LuminanceGenerator.h">
-      <Filter>Header Files\Generators</Filter>
-    </ClInclude>
-    <ClInclude Include="..\generators\MipGenerator.h">
-      <Filter>Header Files\Generators</Filter>
-    </ClInclude>
-    <ClInclude Include="..\include\bias_util.h">
+    <ClInclude Include="bias_util.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="generators\LEDGenerator.h">
+      <Filter>Header Files\Generators</Filter>
+    </ClInclude>
+    <ClInclude Include="generators\LuminanceGenerator.h">
+      <Filter>Header Files\Generators</Filter>
+    </ClInclude>
+    <ClInclude Include="generators\MipGenerator.h">
+      <Filter>Header Files\Generators</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

@@ -20,7 +20,7 @@ namespace hvk
 			Device device, 
 			uint32_t gridWidth, 
 			uint32_t gridHeight, 
-			std::span<int> ledMask,
+			std::vector<int> ledMask,
 			uint32_t surfaceWidth,
 			uint32_t surfaceHeight)
 			: mDevice(device)
@@ -28,6 +28,7 @@ namespace hvk
 			, mLuminanceSurface(nullptr)
 			, mColorCorrectionSurface(nullptr)
 			, mLEDBuffer(nullptr)
+			, mLEDCopyBuffer(nullptr)
 			, mLEDGenerator(mDevice)
 			, mLuminanceGenerator(mDevice)
 			, mMipGenerator(mDevice)
@@ -67,6 +68,7 @@ namespace hvk
 					D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, 
 					D3D12_TEXTURE_LAYOUT_UNKNOWN,
 					D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+					D3D12_HEAP_TYPE_DEFAULT,
 					mMipmappedSurface);
 				assert(SUCCEEDED(hr));
 			}
@@ -84,6 +86,7 @@ namespace hvk
 					D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
 					D3D12_TEXTURE_LAYOUT_UNKNOWN,
 					D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+					D3D12_HEAP_TYPE_DEFAULT,
 					mLuminanceSurface);
 				assert(SUCCEEDED(hr));
 			}
@@ -101,7 +104,26 @@ namespace hvk
 					D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
 					D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
 					D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+					D3D12_HEAP_TYPE_DEFAULT,
 					mLEDBuffer);
+				assert(SUCCEEDED(hr));
+
+				// We can't create a readback buffer with unordered-access.
+				// Thus, we will draw to the first buffer and copy it to
+				// the readback buffer each frame
+				hr = render::CreateResource(
+					mDevice,
+					D3D12_RESOURCE_DIMENSION_BUFFER,
+					DXGI_FORMAT_UNKNOWN,
+					mGridWidth * mGridHeight * 4,
+					1,
+					1,
+					1,
+					D3D12_RESOURCE_FLAG_NONE,
+					D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+					D3D12_RESOURCE_STATE_COPY_DEST,
+					D3D12_HEAP_TYPE_READBACK,
+					mLEDCopyBuffer);
 				assert(SUCCEEDED(hr));
 			}
 
@@ -128,6 +150,7 @@ namespace hvk
 				assert(SUCCEEDED(hr));
 				hr = render::CreateCommandList(device, mCommandAllocator, nullptr, mCommandList);
 				assert(SUCCEEDED(hr));
+				mCommandList->Close();
 			}
 
 			// Generate color correction tex
@@ -143,6 +166,7 @@ namespace hvk
 					D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
 					D3D12_TEXTURE_LAYOUT_UNKNOWN,
 					D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+					D3D12_HEAP_TYPE_DEFAULT,
 					mColorCorrectionSurface);
 				assert(SUCCEEDED(hr));
 
@@ -152,6 +176,15 @@ namespace hvk
 				hr = bias::GenerateColorCorrectionLUT(mDevice, mCommandList, mCommandQueue, mColorCorrectionSurface);
 				assert(SUCCEEDED(hr));
 			}
+
+			// Finally, initialize the Arduino controller
+			int initStatus = mArduinoController->Init();
+			assert(initStatus == 0);
+		}
+
+		AutoBias::~AutoBias()
+		{
+
 		}
 		
 		HRESULT AutoBias::Update(Surface surface)
@@ -178,6 +211,7 @@ namespace hvk
 				mGridWidth, 
 				mGridHeight, 
 				mLEDBuffer, 
+				mLEDCopyBuffer,
 				mColorCorrectionSurface);
 			assert(SUCCEEDED(hr));
 
@@ -191,7 +225,7 @@ namespace hvk
 				// For each one we'll compare it to its respective value in the LED mask
 				// and use that to determine if it's an active LED and where it's place
 				// in the write-out buffer is.
-				mLEDBuffer->Map(0, &ledRange, reinterpret_cast<void**>(&ledPtr));
+				mLEDCopyBuffer->Map(0, &ledRange, reinterpret_cast<void**>(&ledPtr));
 				{
 					size_t bufferIndex = 0;
 					for (size_t bufferIndex = 0; bufferIndex < ledSize; bufferIndex += 4)
@@ -208,7 +242,7 @@ namespace hvk
 						}
 					}
 				}
-				mLEDBuffer->Unmap(0, nullptr);
+				mLEDCopyBuffer->Unmap(0, nullptr);
 
 				mArduinoController->WritePixels(mLEDWriteBuffer);
 			}

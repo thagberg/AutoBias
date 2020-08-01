@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bias_util.h"
+#include "../bias_util.h"
 
 namespace hvk
 {
@@ -18,6 +18,7 @@ namespace hvk
 				uint32_t ledWidth,
 				uint32_t ledHeight,
 				ComPtr<ID3D12Resource> ledTexture,
+				ComPtr<ID3D12Resource> ledCopyBuffer,
 				ComPtr<ID3D12Resource> colorCorrectionTexture);
 
 		private:

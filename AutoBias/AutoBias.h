@@ -3,13 +3,12 @@
 #include <wrl/client.h>
 #include <d3d12.h>
 #include <cstdint>
-#include <span>
 #include <memory>
 #include <vector>
 
-#include <LEDGenerator.h>
-#include <LuminanceGenerator.h>
-#include <MipGenerator.h>
+#include "generators/LEDGenerator.h"
+#include "generators/LuminanceGenerator.h"
+#include "generators/MipGenerator.h"
 
 using namespace Microsoft::WRL;
 
@@ -38,9 +37,10 @@ namespace hvk
 				Device device, 
 				uint32_t gridWidth, 
 				uint32_t gridHeight, 
-				std::span<int> ledMask,
+				std::vector<int> ledMask,
 				uint32_t surfaceWidth,
 				uint32_t surfaceHeight);
+			~AutoBias();
 
 			HRESULT Update(Surface surface);
 
@@ -50,6 +50,7 @@ namespace hvk
 			Surface mLuminanceSurface;
 			Surface mColorCorrectionSurface;
 			LinearBuffer mLEDBuffer;
+			LinearBuffer mLEDCopyBuffer;
 
 			d3d12::LEDGenerator mLEDGenerator;
 			d3d12::LuminanceGenerator mLuminanceGenerator;
@@ -58,7 +59,7 @@ namespace hvk
 			uint32_t mGridWidth;
 			uint32_t mGridHeight;
 			uint16_t mNumMips;
-			std::span<int> mLEDMask;
+			std::vector<int> mLEDMask;
 
 			std::vector<Color> mLEDWriteBuffer;
 			std::unique_ptr<control::ArduinoController> mArduinoController;

@@ -96,6 +96,7 @@ namespace hvk
 			D3D12_RESOURCE_FLAGS flags,
 			D3D12_TEXTURE_LAYOUT layout,
 			D3D12_RESOURCE_STATES resourceStates,
+			D3D12_HEAP_TYPE heaptype,
 			ComPtr<ID3D12Resource>& outResource);
 	}
 }

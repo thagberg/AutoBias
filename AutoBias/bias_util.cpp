@@ -69,7 +69,7 @@ namespace hvk
 			heapDesc.NumDescriptors = 2;
 			heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 			heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-			HRESULT hr = device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&descriptorHeap));
+			hr = device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&descriptorHeap));
 			assert(SUCCEEDED(hr));
 
 			D3D12_DESCRIPTOR_RANGE lutRange = {};

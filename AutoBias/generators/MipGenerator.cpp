@@ -1,7 +1,6 @@
 #define NOMINMAX 1
 
 #include "MipGenerator.h"
-#include "bias_util.h"
 
 #include <algorithm>
 

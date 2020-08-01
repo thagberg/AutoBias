@@ -411,6 +411,7 @@ namespace hvk
 			D3D12_RESOURCE_FLAGS flags,
 			D3D12_TEXTURE_LAYOUT layout,
 			D3D12_RESOURCE_STATES resourceStates,
+			D3D12_HEAP_TYPE heapType,
 			ComPtr<ID3D12Resource>& outResource)
 		{
 			HRESULT hr = S_OK;
@@ -429,6 +430,7 @@ namespace hvk
 			desc.Layout = layout;
 
 			D3D12_HEAP_PROPERTIES heapProps = HeapPropertiesDefault();
+			heapProps.Type = heapType;
 
 			hr = device->CreateCommittedResource(
 				&heapProps,

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bias_util.h"
+#include "../bias_util.h"
 
 namespace hvk
 {

@@ -152,17 +152,18 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\generators\LEDGenerator.cpp" />
-    <ClCompile Include="..\generators\LuminanceGenerator.cpp" />
-    <ClCompile Include="..\generators\MipGenerator.cpp" />
     <ClCompile Include="AutoBias.cpp" />
+    <ClCompile Include="bias_util.cpp" />
+    <ClCompile Include="generators\LEDGenerator.cpp" />
+    <ClCompile Include="generators\LuminanceGenerator.cpp" />
+    <ClCompile Include="generators\MipGenerator.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\generators\LEDGenerator.h" />
-    <ClInclude Include="..\generators\LuminanceGenerator.h" />
-    <ClInclude Include="..\generators\MipGenerator.h" />
-    <ClInclude Include="..\include\bias_util.h" />
     <ClInclude Include="AutoBias.h" />
+    <ClInclude Include="bias_util.h" />
+    <ClInclude Include="generators\LEDGenerator.h" />
+    <ClInclude Include="generators\LuminanceGenerator.h" />
+    <ClInclude Include="generators\MipGenerator.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
