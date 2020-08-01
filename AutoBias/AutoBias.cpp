@@ -253,5 +253,10 @@ namespace hvk
 
 			return hr;
 		}
+
+		const LinearBuffer AutoBias::GetLEDBuffer() const
+		{
+			return mLEDCopyBuffer;
+		}
 	}
 }

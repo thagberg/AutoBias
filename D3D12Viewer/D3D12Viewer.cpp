@@ -415,6 +415,101 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         }
 #endif
 
+        // generate preview texture from LED buffer
+        {
+			const auto ledBuffer = ab.GetLEDBuffer();
+
+			commandList->Reset(commandAllocator.Get(), nullptr);
+
+            D3D12_RANGE ledRange = { 0, 0 };
+            uint8_t* ledPtr;
+            ledBuffer->Map(0, &ledRange, reinterpret_cast<void**>(&ledPtr));
+            {
+				D3D12_HEAP_PROPERTIES intrHeap = {};
+				intrHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
+				intrHeap.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+				intrHeap.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+				intrHeap.CreationNodeMask = 1;
+				intrHeap.VisibleNodeMask = 1;
+
+				ComPtr<ID3D12Resource> intr;
+				D3D12_RESOURCE_DESC intrDesc = {};
+				intrDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+				intrDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+				intrDesc.Width = Align(kGridWidth * 4, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) * kGridHeight;
+				intrDesc.Height = 1;
+				intrDesc.DepthOrArraySize = 1;
+				intrDesc.MipLevels = 1;
+				intrDesc.Format = DXGI_FORMAT_UNKNOWN;
+				intrDesc.SampleDesc.Count = 1;
+				intrDesc.SampleDesc.Quality = 0;
+				intrDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+				intrDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+				device->CreateCommittedResource(
+					&intrHeap,
+					D3D12_HEAP_FLAG_NONE,
+					&intrDesc,
+					D3D12_RESOURCE_STATE_GENERIC_READ,
+					nullptr,
+					IID_PPV_ARGS(&intr));
+
+				uint8_t* intrData;
+				intr->Map(0, nullptr, reinterpret_cast<void**>(&intrData));
+				uint8_t* writeAt = intrData;
+				for (size_t ledY = 0; ledY < kGridHeight; ++ledY)
+				{
+					for (size_t ledX = 0; ledX < kGridWidth; ++ledX)
+					{
+						uint8_t sourceOffset = (ledY * kGridWidth * 4) + ledX * 4;
+						writeAt[0] = ledPtr[sourceOffset];
+						writeAt[1] = ledPtr[sourceOffset + 1];
+						writeAt[2] = ledPtr[sourceOffset + 2];
+						writeAt[3] = ledPtr[sourceOffset + 3];
+						writeAt += 4;
+					}
+					writeAt += (D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - (kGridWidth * 4));
+				}
+				intr->Unmap(0, nullptr);
+
+				D3D12_TEXTURE_COPY_LOCATION previewSrc = {};
+				previewSrc.pResource = intr.Get();
+				previewSrc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+
+				uint64_t requiredSize = 0;
+				device->GetCopyableFootprints(&previewTexture->GetDesc(), 0, 1, 0, &previewSrc.PlacedFootprint, nullptr, nullptr, &requiredSize);
+
+				D3D12_RESOURCE_BARRIER cpyBarrier = {};
+				cpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				cpyBarrier.Transition.pResource = previewTexture.Get();
+				cpyBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				cpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+				cpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+				commandList->ResourceBarrier(1, &cpyBarrier);
+
+
+				D3D12_TEXTURE_COPY_LOCATION previewDest = {};
+				previewDest.pResource = previewTexture.Get();
+				previewDest.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+				previewDest.SubresourceIndex = 0;
+				commandList->CopyTextureRegion(&previewDest, 0, 0, 0, &previewSrc, nullptr);
+
+
+				D3D12_RESOURCE_BARRIER previewBarrier = {};
+				previewBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				previewBarrier.Transition.pResource = previewTexture.Get();
+				previewBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				previewBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+				previewBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+				commandList->ResourceBarrier(1, &previewBarrier);
+				commandList->Close();
+				ID3D12CommandList* previewList[] = { commandList.Get() };
+				commandQueue->ExecuteCommandLists(1, previewList);
+				hvk::render::WaitForGraphics(device, commandQueue);
+            }
+            ledBuffer->Unmap(0, nullptr);
+        }
+
         hr = commandAllocator->Reset();
         assert(SUCCEEDED(hr));
 
@@ -422,17 +517,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         assert(SUCCEEDED(hr));
 
         //D3D12_RESOURCE_DESC mippedDesc = mippedTexture->GetDesc();
-        //D3D12_RESOURCE_DESC previewDesc = previewTexture->GetDesc();
+        D3D12_RESOURCE_DESC previewDesc = previewTexture->GetDesc();
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		//srvDesc.Format = mippedDesc.Format;
-		//srvDesc.Format = previewDesc.Format;
-        srvDesc.Format = resourceDesc.Format;
+		srvDesc.Format = previewDesc.Format;
+        //srvDesc.Format = resourceDesc.Format;
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		//srvDesc.Texture2D.MipLevels = mippedDesc.MipLevels;
 		srvDesc.Texture2D.MipLevels = 1;
         srvDesc.Texture2D.MostDetailedMip = 0;
-        auto resourcePtr = d3d12Resource.Get();
+        auto resourcePtr = previewTexture.Get();
         auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
         device->CreateShaderResourceView(resourcePtr, &srvDesc, uavHandle);
 

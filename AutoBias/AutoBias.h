@@ -40,6 +40,8 @@ namespace hvk
 
 			HRESULT Update(Surface surface);
 
+			const LinearBuffer GetLEDBuffer() const;
+
 		private:
 			Device mDevice;
 			Surface mMipmappedSurface;
