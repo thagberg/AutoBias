@@ -108,7 +108,6 @@ namespace hvk
 		HRESULT MipGenerator::Generate(
 			ComPtr<ID3D12GraphicsCommandList> commandList,
 			ComPtr<ID3D12CommandQueue> commandQueue,
-			ComPtr<ID3D12DescriptorHeap> uavHeap,
 			uint8_t numMips,
 			uint8_t startingMip,
 			ComPtr<ID3D12Resource> sourceTexture,

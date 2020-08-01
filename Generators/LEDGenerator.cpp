@@ -104,8 +104,7 @@ namespace hvk
 			uint32_t ledWidth,
 			uint32_t ledHeight,
 			ComPtr<ID3D12Resource> ledTexture,
-			ComPtr<ID3D12Resource> colorCorrectionTexture,
-			ComPtr<ID3D12Resource> ledCopyBuffer)
+			ComPtr<ID3D12Resource> colorCorrectionTexture)
 		{
 			HRESULT hr = S_OK;
 			auto heapHandle = mDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
@@ -177,41 +176,41 @@ namespace hvk
 			commandList->SetComputeRootDescriptorTable(0, gpuHandle);
 			commandList->Dispatch(ledWidth, ledHeight, 1);
 
-			// transition LED texture from UAV -> Copy Source
-			D3D12_RESOURCE_BARRIER cpyBarrier = {};
-			cpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			cpyBarrier.Transition.pResource = ledTexture.Get();
-			cpyBarrier.Transition.Subresource = 0;
-			cpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-			cpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-			commandList->ResourceBarrier(1, &cpyBarrier);
+			//// transition LED texture from UAV -> Copy Source
+			//D3D12_RESOURCE_BARRIER cpyBarrier = {};
+			//cpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			//cpyBarrier.Transition.pResource = ledTexture.Get();
+			//cpyBarrier.Transition.Subresource = 0;
+			//cpyBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+			//cpyBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+			//commandList->ResourceBarrier(1, &cpyBarrier);
 
-			// copy LED texture to buffer
+			//// copy LED texture to buffer
+			////commandList->CopyResource(ledCopyBuffer.Get(), ledTexture.Get());
+			//D3D12_TEXTURE_COPY_LOCATION cpySource = {};
+			//cpySource.pResource = ledTexture.Get();
+			////cpySource.Type = d3d12_buffer_co;
+			//uint64_t requiredSize = 0;
+			//mDevice->GetCopyableFootprints(&ledDesc, 0, 1, 0, &cpySource.PlacedFootprint, nullptr, nullptr, &requiredSize);
+
+			//auto cpyDesc = ledCopyBuffer->GetDesc();
+			//D3D12_TEXTURE_COPY_LOCATION cpyDest = {};
+			//cpyDest.pResource = ledCopyBuffer.Get();
+			//cpyDest.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+			//uint64_t copySize = 0;
+			//mDevice->GetCopyableFootprints(&cpyDesc, 0, 1, 0, &cpyDest.PlacedFootprint, nullptr, nullptr, &copySize);
+
+			////commandList->CopyTextureRegion(&cpyDest, 0, 0, 0, &cpySource, nullptr);
 			//commandList->CopyResource(ledCopyBuffer.Get(), ledTexture.Get());
-			D3D12_TEXTURE_COPY_LOCATION cpySource = {};
-			cpySource.pResource = ledTexture.Get();
-			//cpySource.Type = d3d12_buffer_co;
-			uint64_t requiredSize = 0;
-			mDevice->GetCopyableFootprints(&ledDesc, 0, 1, 0, &cpySource.PlacedFootprint, nullptr, nullptr, &requiredSize);
 
-			auto cpyDesc = ledCopyBuffer->GetDesc();
-			D3D12_TEXTURE_COPY_LOCATION cpyDest = {};
-			cpyDest.pResource = ledCopyBuffer.Get();
-			cpyDest.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-			uint64_t copySize = 0;
-			mDevice->GetCopyableFootprints(&cpyDesc, 0, 1, 0, &cpyDest.PlacedFootprint, nullptr, nullptr, &copySize);
-
-			//commandList->CopyTextureRegion(&cpyDest, 0, 0, 0, &cpySource, nullptr);
-			commandList->CopyResource(ledCopyBuffer.Get(), ledTexture.Get());
-
-			// transition LED texture back to UAV
-			D3D12_RESOURCE_BARRIER uavBarrier = {};
-			uavBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			uavBarrier.Transition.pResource = ledTexture.Get();
-			uavBarrier.Transition.Subresource = 0;
-			uavBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
-			uavBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-			commandList->ResourceBarrier(1, &uavBarrier);
+			//// transition LED texture back to UAV
+			//D3D12_RESOURCE_BARRIER uavBarrier = {};
+			//uavBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			//uavBarrier.Transition.pResource = ledTexture.Get();
+			//uavBarrier.Transition.Subresource = 0;
+			//uavBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+			//uavBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+			//commandList->ResourceBarrier(1, &uavBarrier);
 
 			commandList->Close();
 			ID3D12CommandList* ledLists[] = { commandList.Get() };

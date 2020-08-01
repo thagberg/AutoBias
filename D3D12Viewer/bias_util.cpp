@@ -24,39 +24,38 @@ namespace hvk
 			return readSuccess && (bytesRead == codeSize);
 		}
 
-		HRESULT GetNextFrameResource(const CaptureManager& cm, IDXGIResource** outResource)
-		{
-			HRESULT hr = S_OK;
+		//HRESULT GetNextFrameResource(const CaptureManager& cm, IDXGIResource** outResource)
+		//{
+		//	HRESULT hr = S_OK;
 
-			hr = cm.AcquireFrameAsDXGIResource(outResource);
-			if (!SUCCEEDED(hr))
-			{
-				uint8_t numRetries = 0;
-				while (numRetries < 10)
-				{
-					++numRetries;
-					Sleep(200);
-					//cm = CaptureManager();
-					//hr = cm.Init();
-					if (SUCCEEDED(hr))
-					{
-						hr = cm.AcquireFrameAsDXGIResource(outResource);
-						if (SUCCEEDED(hr))
-						{
-							break;
-						}
-					}
-				}
-			}
+		//	hr = cm.AcquireFrameAsDXGIResource(outResource);
+		//	if (!SUCCEEDED(hr))
+		//	{
+		//		uint8_t numRetries = 0;
+		//		while (numRetries < 10)
+		//		{
+		//			++numRetries;
+		//			Sleep(200);
+		//			//cm = CaptureManager();
+		//			//hr = cm.Init();
+		//			if (SUCCEEDED(hr))
+		//			{
+		//				hr = cm.AcquireFrameAsDXGIResource(outResource);
+		//				if (SUCCEEDED(hr))
+		//				{
+		//					break;
+		//				}
+		//			}
+		//		}
+		//	}
 
-			return hr;
-		}
+		//	return hr;
+		//}
 
 		HRESULT GenerateColorCorrectionLUT(
 			ComPtr<ID3D12Device> device,
 			ComPtr<ID3D12GraphicsCommandList> singleUse,
 			ComPtr<ID3D12CommandQueue> commandQueue,
-			ComPtr<ID3D12DescriptorHeap> uavHeap,
 			ComPtr<ID3D12Resource> colorCorrectionTex)
 		{
 			HRESULT hr = S_OK;
@@ -64,6 +63,14 @@ namespace hvk
 			std::vector<uint8_t> lutByteCode;
 			bool shaderLoadSuccess = LoadShaderByteCode(L"shaders\\lut_generator.cso", lutByteCode);
 			assert(shaderLoadSuccess);
+
+			ComPtr<ID3D12DescriptorHeap> descriptorHeap;
+			D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+			heapDesc.NumDescriptors = 2;
+			heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+			heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+			HRESULT hr = device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&descriptorHeap));
+			assert(SUCCEEDED(hr));
 
 			D3D12_DESCRIPTOR_RANGE lutRange = {};
 			lutRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
@@ -92,13 +99,13 @@ namespace hvk
 			lutDesc.Texture3D.MipSlice = 0;
 			lutDesc.Texture3D.WSize = 256;
 			lutDesc.Texture3D.FirstWSlice = 0;
-			auto uavHandle = uavHeap->GetCPUDescriptorHandleForHeapStart();
+			auto uavHandle = descriptorHeap->GetCPUDescriptorHandleForHeapStart();
 			device->CreateUnorderedAccessView(colorCorrectionTex.Get(), nullptr, &lutDesc, uavHandle);
 			singleUse->SetPipelineState(lutPipelineState.Get());
 			singleUse->SetComputeRootSignature(rootSig.Get());
-			ID3D12DescriptorHeap* lutHeaps[] = { uavHeap.Get() };
+			ID3D12DescriptorHeap* lutHeaps[] = { descriptorHeap.Get() };
 			singleUse->SetDescriptorHeaps(_countof(lutHeaps), lutHeaps);
-			singleUse->SetComputeRootDescriptorTable(0, uavHeap->GetGPUDescriptorHandleForHeapStart());
+			singleUse->SetComputeRootDescriptorTable(0, descriptorHeap->GetGPUDescriptorHandleForHeapStart());
 			singleUse->Dispatch(32, 32, 32);
 
 			D3D12_RESOURCE_BARRIER lutBarrier = {};

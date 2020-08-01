@@ -84,5 +84,18 @@ namespace hvk
 		HRESULT WaitForGraphics(ComPtr<ID3D12Device> device, ComPtr<ID3D12CommandQueue> commandQueue);
 
 		D3D12_HEAP_PROPERTIES HeapPropertiesDefault();
+
+		HRESULT CreateResource(
+			ComPtr<ID3D12Device> device, 
+			D3D12_RESOURCE_DIMENSION resourceDimension, 
+			DXGI_FORMAT format, 
+			uint64_t width, 
+			uint64_t height, 
+			uint16_t depthOrArraySize, 
+			uint16_t numMips, 
+			D3D12_RESOURCE_FLAGS flags,
+			D3D12_TEXTURE_LAYOUT layout,
+			D3D12_RESOURCE_STATES resourceStates,
+			ComPtr<ID3D12Resource>& outResource);
 	}
 }

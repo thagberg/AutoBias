@@ -1,7 +1,5 @@
 #pragma once
 
-#include "CaptureManager.h"
-
 #include <cstdint>
 #include <dxgi1_6.h>
 
@@ -30,13 +28,12 @@ namespace hvk
 
 		bool LoadShaderByteCode(LPCWSTR filename, std::vector<uint8_t>& byteCodeOut);
 
-		HRESULT GetNextFrameResource(const CaptureManager& cm, IDXGIResource** outResource);
+		//HRESULT GetNextFrameResource(const CaptureManager& cm, IDXGIResource** outResource);
 
 		HRESULT GenerateColorCorrectionLUT(
 			ComPtr<ID3D12Device> device,
 			ComPtr<ID3D12GraphicsCommandList> singleUse,
 			ComPtr<ID3D12CommandQueue> commandQueue,
-			ComPtr<ID3D12DescriptorHeap> uavHeap,
 			ComPtr<ID3D12Resource> colorCorrectionTex);
 
 		HRESULT GenerateMips(

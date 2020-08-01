@@ -1,135 +1,219 @@
-// AutoBias.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
+#define NOMINMAX 1
 
-#include <iostream>
-#include <d3d11.h>
-#include <dxgi1_2.h>
+#include "AutoBias.h"
 
-#pragma comment(lib, "d3d11.lib")
+#include <cmath>
+#include <wrl/implements.h>
 
-enum class ErrorCodes
+#include <Render.h>
+#include <ArduinoControl.h>
+
+namespace hvk
 {
-    D3DDeviceCreate = 1,
-    DXGIDeviceCreate,
-    DXGIAdapterFetch,
-    DXGIOutputFetch,
-    DXGIOutput1Fetch,
-    DXGISurfaceFetch,
-    DXGIDuplication,
-    FrameAcquisition,
-    ResourceToTexture
-};
+	namespace bias
+	{
+		// Bucket Dimension is the number of pixels processed in each XY dimension
+		// for calculating LED colors. 
+		const float kBucketDimension = 8.f;
 
-template <typename EnumType>
-int EnumToValue(EnumType e)
-{
-    return static_cast<int>(e);
+		AutoBias::AutoBias(
+			Device device, 
+			uint32_t gridWidth, 
+			uint32_t gridHeight, 
+			std::span<int> ledMask,
+			uint32_t surfaceWidth,
+			uint32_t surfaceHeight)
+			: mDevice(device)
+			, mMipmappedSurface(nullptr)
+			, mLuminanceSurface(nullptr)
+			, mColorCorrectionSurface(nullptr)
+			, mLEDBuffer(nullptr)
+			, mLEDGenerator(mDevice)
+			, mLuminanceGenerator(mDevice)
+			, mMipGenerator(mDevice)
+			, mGridWidth(gridWidth)
+			, mGridHeight(gridHeight)
+			, mNumMips(0)
+			, mLEDMask(ledMask)
+			, mLEDWriteBuffer()
+			, mArduinoController(nullptr)
+			, mCommandQueue(nullptr)
+			, mCommandAllocator(nullptr)
+			, mCommandList(nullptr)
+		{
+			HRESULT hr = S_OK;
+
+			// Create mipped surface
+			{
+				const float maxX = mGridWidth * kBucketDimension;
+				const float maxY = mGridHeight * kBucketDimension;
+
+				// Find the number of mipmaps required from the surface resolution until
+				// we can process LED colors in a single pass
+				const auto xMips = static_cast<uint16_t>(std::ceil(std::log2(surfaceWidth / maxX)));
+				const auto yMips = static_cast<uint16_t>(std::ceil(std::log2(surfaceHeight / maxY)));
+				mNumMips = std::min(xMips, yMips);
+				// We'll calculate luminance on a further mip than is required
+				++mNumMips;
+
+				hr = render::CreateResource(
+					mDevice, 
+					D3D12_RESOURCE_DIMENSION_TEXTURE2D, 
+					DXGI_FORMAT_B8G8R8A8_UNORM, 
+					surfaceWidth, 
+					surfaceHeight, 
+					1, 
+					mNumMips, 
+					D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, 
+					D3D12_TEXTURE_LAYOUT_UNKNOWN,
+					D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+					mMipmappedSurface);
+				assert(SUCCEEDED(hr));
+			}
+
+			// Create luminance surface
+			{
+				hr = render::CreateResource(
+					mDevice,
+					D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+					DXGI_FORMAT_A8_UNORM,
+					surfaceWidth >> (mNumMips - 1),
+					surfaceHeight >> (mNumMips - 1),
+					1,
+					1,
+					D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+					D3D12_TEXTURE_LAYOUT_UNKNOWN,
+					D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+					mLuminanceSurface);
+				assert(SUCCEEDED(hr));
+			}
+
+			// Create LED buffer
+			{
+				hr = render::CreateResource(
+					mDevice,
+					D3D12_RESOURCE_DIMENSION_BUFFER,
+					DXGI_FORMAT_UNKNOWN,
+					mGridWidth * mGridHeight * 4,
+					1,
+					1,
+					1,
+					D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+					D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+					D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+					mLEDBuffer);
+				assert(SUCCEEDED(hr));
+			}
+
+			// Create ArduinoController
+			{
+				// calculate the number of active LEDs from the mask
+				size_t numLeds = 0;
+				for (const auto m : mLEDMask)
+				{
+					if (m >= 0)
+					{
+						++numLeds;
+					}
+				}
+				mArduinoController = std::make_unique<control::ArduinoController>(numLeds);
+				mLEDWriteBuffer.resize(numLeds);
+			}
+
+			// Create command list
+			{
+				hr = render::CreateCommandQueue(device, mCommandQueue);
+				assert(SUCCEEDED(hr));
+				hr = render::CreateCommandAllocator(device, mCommandAllocator);
+				assert(SUCCEEDED(hr));
+				hr = render::CreateCommandList(device, mCommandAllocator, nullptr, mCommandList);
+				assert(SUCCEEDED(hr));
+			}
+
+			// Generate color correction tex
+			{
+				hr = render::CreateResource(
+					mDevice,
+					D3D12_RESOURCE_DIMENSION_TEXTURE3D,
+					DXGI_FORMAT_B8G8R8A8_UNORM,
+					256,
+					256,
+					256,
+					1,
+					D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+					D3D12_TEXTURE_LAYOUT_UNKNOWN,
+					D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+					mColorCorrectionSurface);
+				assert(SUCCEEDED(hr));
+
+				auto heapProps = render::HeapPropertiesDefault();
+
+				mCommandList->Reset(mCommandAllocator.Get(), nullptr);
+				hr = bias::GenerateColorCorrectionLUT(mDevice, mCommandList, mCommandQueue, mColorCorrectionSurface);
+				assert(SUCCEEDED(hr));
+			}
+		}
+		
+		HRESULT AutoBias::Update(Surface surface)
+		{
+			HRESULT hr = S_OK;
+
+			// generate mipmaps
+			mCommandList->Reset(mCommandAllocator.Get(), nullptr);
+			hr = mMipGenerator.Generate(mCommandList, mCommandQueue, mNumMips - 1, 0, surface, mMipmappedSurface);
+			assert(SUCCEEDED(hr));
+
+			// generate luminance
+			mCommandList->Reset(mCommandAllocator.Get(), nullptr);
+			hr = mLuminanceGenerator.Generate(mCommandList, mCommandQueue, mMipmappedSurface, mNumMips - 1, mLuminanceSurface);
+			assert(SUCCEEDED(hr));
+
+			// generate LED colors
+			mCommandList->Reset(mCommandAllocator.Get(), nullptr);
+			hr = mLEDGenerator.Generate(
+				mCommandList, 
+				mCommandQueue, 
+				mMipmappedSurface, 
+				mNumMips - 1, 
+				mGridWidth, 
+				mGridHeight, 
+				mLEDBuffer, 
+				mColorCorrectionSurface);
+			assert(SUCCEEDED(hr));
+
+			// write LEDs out to Arduino
+			{
+				const size_t ledSize = mGridHeight * mGridWidth * 4;
+				const D3D12_RANGE ledRange = { 0, ledSize };
+				uint8_t* ledPtr;
+
+				// Iterate over values in the buffer we wrote out to in the LED generator.
+				// For each one we'll compare it to its respective value in the LED mask
+				// and use that to determine if it's an active LED and where it's place
+				// in the write-out buffer is.
+				mLEDBuffer->Map(0, &ledRange, reinterpret_cast<void**>(&ledPtr));
+				{
+					size_t bufferIndex = 0;
+					for (size_t bufferIndex = 0; bufferIndex < ledSize; bufferIndex += 4)
+					{
+						auto ledIndex = mLEDMask[bufferIndex / 4];
+						if (ledIndex >= 0)
+						{
+							hvk::Color c = {
+								ledPtr[bufferIndex],
+								ledPtr[bufferIndex + 1],
+								ledPtr[bufferIndex + 2]
+							};
+							mLEDWriteBuffer[ledIndex] = c;
+						}
+					}
+				}
+				mLEDBuffer->Unmap(0, nullptr);
+
+				mArduinoController->WritePixels(mLEDWriteBuffer);
+			}
+
+			return hr;
+		}
+	}
 }
-
-int main()
-{
-    std::cout << "Hello World!\n";
-
-    HRESULT hr = S_OK;
-
-    ID3D11Device* device;
-    ID3D11DeviceContext* context;
-    IDXGIDevice* dxgiDevice;
-    IDXGIAdapter* dxgiAdapter;
-    IDXGIOutput* dxgiOutput;
-    IDXGIOutput1* dxgiOutput1;
-    IDXGIOutputDuplication* duplication;
-    ID3D11Texture2D* desktopSurfaceTexture;
-    //IDXGIResource dxgiSurfaceResource;
-
-    D3D_FEATURE_LEVEL FeatureLevels[] =
-    {
-        D3D_FEATURE_LEVEL_11_0
-    };
-
-    D3D_FEATURE_LEVEL availableFeatureLevel;
-
-    hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, FeatureLevels, 1, D3D11_SDK_VERSION, &device, &availableFeatureLevel, &context);
-
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to create D3D11 Device and Context" << std::endl;
-        return EnumToValue(ErrorCodes::D3DDeviceCreate);
-    }
-
-    hr = device->QueryInterface<IDXGIDevice>(&dxgiDevice);
-
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to create DXGI Device" << std::endl;
-        return EnumToValue(ErrorCodes::DXGIDeviceCreate);
-    }
-
-    //hr = DxgiDevice->GetParent(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&DxgiAdapter));
-    hr = dxgiDevice->GetParent(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&dxgiAdapter));
-
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to obtain DXGI Adapter" << std::endl;
-        return EnumToValue(ErrorCodes::DXGIAdapterFetch);
-    }
-
-    hr = dxgiAdapter->EnumOutputs(0, &dxgiOutput);
-
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to obtain DXGI Output" << std::endl;
-        return EnumToValue(ErrorCodes::DXGIOutputFetch);
-    }
-
-    hr = dxgiOutput->QueryInterface<IDXGIOutput1>(&dxgiOutput1);
-
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to obtain DXGI Output 1" << std::endl;
-        return EnumToValue(ErrorCodes::DXGIOutput1Fetch);
-    }
-
-    hr = dxgiOutput1->DuplicateOutput(device, &duplication);
-
-    if (!SUCCEEDED(hr))
-    {
-        std::cerr << "Failed to duplicate output" << std::endl;
-        return EnumToValue(ErrorCodes::DXGIDuplication);
-    }
-
-
-    IDXGIResource* displayResource;
-    DXGI_OUTDUPL_FRAME_INFO frameInfo;
-
-    hr = duplication->AcquireNextFrame(INFINITE, &frameInfo, &displayResource);
-    if (!SUCCEEDED(hr))
-    {
-        return hr;
-    }
-
-    hr = displayResource->QueryInterface<ID3D11Texture2D>(&desktopSurfaceTexture);
-    if (!SUCCEEDED(hr))
-    {
-        return hr;
-    }
-
-    //hr = dxgiOutput1->GetDisplaySurfaceData1(&dxgiSurfaceResource);
-
-    //if (!SUCCEEDED(hr))
-    //{
-    //    std::cerr << "Failed to fetch display surface" << std::endl;
-    //    return EnumToValue(ErrorCodes::DXGISurfaceFetch);
-    //}
-}
-
-// Run program: Ctrl + F5 or Debug > Start Without Debugging menu
-// Debug program: F5 or Debug > Start Debugging menu
-
-// Tips for Getting Started: 
-//   1. Use the Solution Explorer window to add/manage files
-//   2. Use the Team Explorer window to connect to source control
-//   3. Use the Output window to see build output and other messages
-//   4. Use the Error List window to view errors
-//   5. Go to Project > Add New Item to create new code files, or Project > Add Existing Item to add existing code files to the project
-//   6. In the future, to open this project again, go to File > Open > Project and select the .sln file

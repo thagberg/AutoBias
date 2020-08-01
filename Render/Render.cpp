@@ -399,6 +399,47 @@ namespace hvk
 			props.VisibleNodeMask = 1;
 			return props;
 		}
+
+		HRESULT CreateResource(
+			ComPtr<ID3D12Device> device,
+			D3D12_RESOURCE_DIMENSION resourceDimension,
+			DXGI_FORMAT format,
+			uint64_t width,
+			uint64_t height,
+			uint16_t depthOrArraySize,
+			uint16_t numMips,
+			D3D12_RESOURCE_FLAGS flags,
+			D3D12_TEXTURE_LAYOUT layout,
+			D3D12_RESOURCE_STATES resourceStates,
+			ComPtr<ID3D12Resource>& outResource)
+		{
+			HRESULT hr = S_OK;
+
+			D3D12_RESOURCE_DESC desc = {};
+			desc.Dimension = resourceDimension;
+			desc.Format = format;
+			desc.Alignment = 0;
+			desc.Width = width;
+			desc.Height = height;
+			desc.DepthOrArraySize = depthOrArraySize;
+			desc.MipLevels = numMips;
+			desc.SampleDesc.Count = 1;
+			desc.SampleDesc.Quality = 0;
+			desc.Flags = flags;
+			desc.Layout = layout;
+
+			D3D12_HEAP_PROPERTIES heapProps = HeapPropertiesDefault();
+
+			hr = device->CreateCommittedResource(
+				&heapProps,
+				D3D12_HEAP_FLAG_NONE,
+				&desc,
+				resourceStates,
+				nullptr,
+				IID_PPV_ARGS(&outResource));
+
+			return hr;
+		}
 	}
 }
 
