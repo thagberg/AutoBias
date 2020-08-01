@@ -9,16 +9,12 @@
 #include "generators/LEDGenerator.h"
 #include "generators/LuminanceGenerator.h"
 #include "generators/MipGenerator.h"
+#include <ArduinoControl.h>
 
 using namespace Microsoft::WRL;
 
 namespace hvk
 {
-	namespace control
-	{
-		class ArduinoController;
-	}
-
 	struct Color;
 
 	namespace bias

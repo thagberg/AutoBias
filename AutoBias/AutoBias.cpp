@@ -184,7 +184,8 @@ namespace hvk
 
 		AutoBias::~AutoBias()
 		{
-
+			mArduinoController->Stop();
+			mArduinoController.reset(nullptr);
 		}
 		
 		HRESULT AutoBias::Update(Surface surface)

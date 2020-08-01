@@ -39,6 +39,7 @@ namespace hvk
 			ArduinoController(size_t size);
 			~ArduinoController();
 			int8_t Init();
+			bool Stop();
 			DWORD WritePixels(const std::vector<Color>& pixels);
 		private:
 			HANDLE mCommHandle;
@@ -51,6 +52,7 @@ namespace hvk
 			std::shared_mutex mBufferMutex;
 			bool mDisplayReady;
 			char mReadBuffer[256];
+			size_t mSize;
 
 			void UpdateDevice();
 		};
