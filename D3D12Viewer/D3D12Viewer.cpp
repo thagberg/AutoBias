@@ -408,13 +408,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
         ab.Update(d3d12Resource);
 
-#if defined(RENDERDOC)
-        if (frameCount == 0)
-        {
-			rdoc_api->EndFrameCapture(device.Get(), window);
-        }
-#endif
-
         // generate preview texture from LED buffer
         {
 			const auto ledBuffer = ab.GetLEDBuffer();
@@ -436,7 +429,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 				D3D12_RESOURCE_DESC intrDesc = {};
 				intrDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
 				intrDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
-				intrDesc.Width = Align(kGridWidth * 4, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) * kGridHeight;
+				intrDesc.Width = Align(kGridWidth * 4, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) * kGridHeight - (D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - (kGridWidth * 4));
 				intrDesc.Height = 1;
 				intrDesc.DepthOrArraySize = 1;
 				intrDesc.MipLevels = 1;
@@ -459,16 +452,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 				uint8_t* writeAt = intrData;
 				for (size_t ledY = 0; ledY < kGridHeight; ++ledY)
 				{
-					for (size_t ledX = 0; ledX < kGridWidth; ++ledX)
-					{
-						uint8_t sourceOffset = (ledY * kGridWidth * 4) + ledX * 4;
-						writeAt[0] = ledPtr[sourceOffset];
-						writeAt[1] = ledPtr[sourceOffset + 1];
-						writeAt[2] = ledPtr[sourceOffset + 2];
-						writeAt[3] = ledPtr[sourceOffset + 3];
-						writeAt += 4;
-					}
-					writeAt += (D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - (kGridWidth * 4));
+					size_t sourceOffset = (ledY * kGridWidth * 4);
+                    memcpy(writeAt, ledPtr + sourceOffset, kGridWidth * 4);
+                    writeAt = reinterpret_cast<uint8_t*>(Align(reinterpret_cast<size_t>(writeAt)+1, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT));
 				}
 				intr->Unmap(0, nullptr);
 
@@ -585,6 +571,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         commandQueue->ExecuteCommandLists(1, commandLists);
         hr = swapchain->Present(1, 0);
         assert(SUCCEEDED(hr));
+
+#if defined(RENDERDOC)
+        if (frameCount == 0)
+        {
+			rdoc_api->EndFrameCapture(device.Get(), window);
+        }
+#endif
+
 
         uint64_t fence = fenceValue;
         commandQueue->Signal(frameFence.Get(), fence);

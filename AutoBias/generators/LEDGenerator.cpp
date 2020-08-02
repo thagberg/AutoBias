@@ -8,6 +8,7 @@ namespace hvk
 		struct LEDConstantBuffer
 		{
 			uint32_t DispatchSize[3];
+			uint8_t blank;
 			float TexelSize[2];
 		};
 
@@ -159,6 +160,7 @@ namespace hvk
 			auto texelHeight = ledHeight * 8;
 			*cbPtr = LEDConstantBuffer{
 				{ledWidth, ledHeight, 1},
+				1,
 				{ 1.f / texelWidth, 1.f / texelHeight }
 			};
 			mConstantBuffer->Unmap(0, nullptr);
