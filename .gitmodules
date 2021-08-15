@@ -1,0 +1,3 @@
+[submodule "ArduinoLED"]
+	path = ArduinoLED
+	url = git@github.com:thagberg/ArduinoLED.git
