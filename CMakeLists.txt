@@ -22,7 +22,5 @@ add_subdirectory(DesktopCapture)
 add_subdirectory(AutoBias)
 target_link_libraries(libAutoBias PUBLIC libRender libArduinoControl libTestDevice)
 
-add_subdirectory(QtTrayApp)
-
 add_subdirectory(D3D12Viewer)
 target_link_libraries(Viewer PUBLIC libRender libAutoBias libDesktopCapture libDevice libArduinoControl)
