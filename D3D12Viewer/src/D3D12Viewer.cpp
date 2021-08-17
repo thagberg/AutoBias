@@ -333,7 +333,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     D3D12_RESOURCE_DESC previewDesc = {};
     previewDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    previewDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    //previewDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    previewDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     previewDesc.MipLevels = 1;
     previewDesc.Width = kGridWidth;
     previewDesc.Height = kGridHeight;

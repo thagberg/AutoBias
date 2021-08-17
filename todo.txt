@@ -1,0 +1,2 @@
+* Re-initialize CaptureManager after number of failed frame acquisitions
+	* This should allow AutoBias to recover after sleep, etc.
