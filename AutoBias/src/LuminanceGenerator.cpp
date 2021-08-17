@@ -1,4 +1,5 @@
 #include "generator/LuminanceGenerator.h"
+#include <ShaderService.h>
 
 namespace hvk
 {
@@ -9,9 +10,16 @@ namespace hvk
 		{
 			assert(mDevice != nullptr);
 
-			std::vector<uint8_t> luminanceByteCode;
-			bool shaderLoadSuccess = bias::LoadShaderByteCode(L"shaders\\luminance.cso", luminanceByteCode);
-			assert(shaderLoadSuccess);
+			//std::vector<uint8_t> luminanceByteCode;
+			IDxcBlob* luminanceByteCode;
+			//bool shaderLoadSuccess = bias::LoadShaderByteCode(L"shaders\\luminance.cso", luminanceByteCode);
+			//assert(shaderLoadSuccess);
+			hvk::render::shader::ShaderDefinition luminanceDef{
+				L"shaders\\luminance.hlsl",
+				L"main",
+				L"cs_6_3"
+			};
+			hvk::render::shader::ShaderService::Initialize()->CompileShader(luminanceDef, &luminanceByteCode);
 
 			// create descriptor heap
 			D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
@@ -46,7 +54,13 @@ namespace hvk
 			hr = render::CreateRootSignature(device, { lumParam }, {}, mRootSig);
 			assert(SUCCEEDED(hr));
 
-			hr = hvk::render::CreateComputePipelineState(device, mRootSig, luminanceByteCode.data(), luminanceByteCode.size(), mPipelineState);
+			//hr = hvk::render::CreateComputePipelineState(device, mRootSig, luminanceByteCode.data(), luminanceByteCode.size(), mPipelineState);
+			hr = hvk::render::CreateComputePipelineState(
+				device, 
+				mRootSig, 
+				reinterpret_cast<uint8_t*>(luminanceByteCode->GetBufferPointer()),
+				luminanceByteCode->GetBufferSize(),
+				mPipelineState);
 			assert(SUCCEEDED(hr));
 		}
 

@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "bias_util.h"
+#include <ShaderService.h>
 
 namespace hvk
 {
@@ -22,9 +23,16 @@ namespace hvk
 		{
 			assert(mDevice != nullptr);
 
-			std::vector<uint8_t> ledByteCode;
-			bool shaderLoadSuccess = bias::LoadShaderByteCode(L"shaders\\led_calc.cso", ledByteCode);
-			assert(shaderLoadSuccess);
+			//std::vector<uint8_t> ledByteCode;
+			IDxcBlob* ledByteCode;
+			//bool shaderLoadSuccess = bias::LoadShaderByteCode(L"shaders\\led_calc.cso", ledByteCode);
+			//assert(shaderLoadSuccess);
+			hvk::render::shader::ShaderDefinition ledDef{
+				L"shaders\\led_calc.hlsl",
+				L"main",
+				L"cs_6_3"
+			};
+			hvk::render::shader::ShaderService::Initialize()->CompileShader(ledDef, &ledByteCode);
 
 			D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
 			heapDesc.NumDescriptors = 4;
@@ -80,7 +88,13 @@ namespace hvk
 			hr = render::CreateRootSignature(mDevice, { param }, { bilinearSampler }, mRootSig);
 			assert(SUCCEEDED(hr));
 
-			hr = render::CreateComputePipelineState(mDevice, mRootSig, ledByteCode.data(), ledByteCode.size(), mPipelineState);
+			//hr = render::CreateComputePipelineState(mDevice, mRootSig, ledByteCode.data(), ledByteCode.size(), mPipelineState);
+			hr = render::CreateComputePipelineState(
+				mDevice, 
+				mRootSig, 
+				reinterpret_cast<uint8_t*>(ledByteCode->GetBufferPointer()),
+				ledByteCode->GetBufferSize(),
+				mPipelineState);
 			assert(SUCCEEDED(hr));
 
 			D3D12_RESOURCE_DESC cbDesc = {};

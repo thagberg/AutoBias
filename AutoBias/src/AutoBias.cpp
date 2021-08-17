@@ -6,7 +6,9 @@
 //#include <wrl/implements.h>
 
 #include <Render.h>
-#include <ArduinoControl/ArduinoControl.h>
+#include <DeviceControl.h>
+#include <ArduinoDevice.h>
+#include <TestDevice.h>
 
 namespace hvk
 {
@@ -15,6 +17,9 @@ namespace hvk
 		// Bucket Dimension is the number of pixels processed in each XY dimension
 		// for calculating LED colors. 
 		const float kBucketDimension = 8.f;
+
+		//hvk::render::shader::ShaderService AutoBias::sShaderService
+		std::shared_ptr<hvk::render::shader::ShaderService> AutoBias::sShaderService = hvk::render::shader::ShaderService::Initialize();
 
 		AutoBias::AutoBias(
 			Device device, 
@@ -37,7 +42,8 @@ namespace hvk
 			, mNumMips(0)
 			, mLEDMask(ledMask)
 			, mLEDWriteBuffer()
-			, mArduinoController(nullptr)
+			//, mArduinoController(nullptr)
+			, mBiasDevice(nullptr)
 			, mCommandQueue(nullptr)
 			, mCommandAllocator(nullptr)
 			, mCommandList(nullptr)
@@ -138,7 +144,16 @@ namespace hvk
 						++numLeds;
 					}
 				}
-				mArduinoController = std::make_unique<control::ArduinoController>(numLeds);
+				//mArduinoController = std::make_unique<control::ArduinoController>(numLeds);
+				//mArduinoDevice = std::make_unique<control::DeviceController<control::ArduinoDevice>>(control::ArduinoDevice(), numLeds);
+				//mDevice = std::make_unique<control::DeviceController<control::ArduinoDevice>>(control::ArduinoDevice(), numLeds);
+				//std::unique_ptr<control::Device> subDevice = std::make_unique<control::ArduinoDevice>();
+				//mBiasDevice = std::make_unique<control::DeviceController>(subDevice, numLeds);
+				//mBiasDevice = std::make_unique<control::DeviceController>(std::make_unique<control::ArduinoDevice>(), numLeds);
+				//mBiasDevice = std::make_unique<control::DeviceController>(std::unique_ptr<, numLeds);
+
+				//mBiasDevice = std::make_unique<control::DeviceController>(new control::ArduinoDevice(), numLeds);
+				mBiasDevice = std::make_unique<control::DeviceController>(new control::TestDevice(), numLeds);
 				mLEDWriteBuffer.resize(numLeds);
 			}
 
@@ -178,14 +193,20 @@ namespace hvk
 			}
 
 			// Finally, initialize the Arduino controller
-			int initStatus = mArduinoController->Init();
-			assert(initStatus == 0);
+			//int initStatus = mArduinoController->Init();
+			//assert(initStatus == 0);
+			//mArduinoDevice->Start();
+			mBiasDevice->Start();
 		}
 
 		AutoBias::~AutoBias()
 		{
-			mArduinoController->Stop();
-			mArduinoController.reset(nullptr);
+			//mArduinoController->Stop();
+			//mArduinoController.reset(nullptr);
+			//mArduinoDevice->Stop();
+			//mArduinoDevice.reset(nullptr);
+			mBiasDevice->Stop();
+			mBiasDevice.reset(nullptr);
 		}
 		
 		HRESULT AutoBias::Update(Surface surface)
@@ -237,7 +258,7 @@ namespace hvk
 						auto ledIndex = mLEDMask[bufferIndex / 4];
 						if (ledIndex >= 0)
 						{
-							hvk::Color c = {
+							hvk::control::Color c = {
 								ledPtr[bufferIndex],
 								ledPtr[bufferIndex + 1],
 								ledPtr[bufferIndex + 2]
@@ -248,7 +269,9 @@ namespace hvk
 				}
 				mLEDCopyBuffer->Unmap(0, nullptr);
 
-				mArduinoController->WritePixels(mLEDWriteBuffer);
+				//mArduinoController->WritePixels(mLEDWriteBuffer);
+				//mArduinoDevice->WriteBuffer(mLEDWriteBuffer);
+				mBiasDevice->WriteBuffer(mLEDWriteBuffer);
 			}
 
 			return hr;

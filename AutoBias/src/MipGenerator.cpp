@@ -4,6 +4,8 @@
 
 #include <algorithm>
 
+#include <ShaderService.h>
+
 const LPCWSTR kMipShaderFile = L"shaders\\generate_mips.cso";
 
 namespace hvk
@@ -15,9 +17,16 @@ namespace hvk
 		{
 			assert(mDevice != nullptr);
 
-			std::vector<uint8_t> mipByteCode;
-			bool shaderLoadSuccess = bias::LoadShaderByteCode(kMipShaderFile, mipByteCode);
-			assert(shaderLoadSuccess);
+			//std::vector<uint8_t> mipByteCode;
+			IDxcBlob* mipByteCode;
+			//bool shaderLoadSuccess = bias::LoadShaderByteCode(kMipShaderFile, mipByteCode);
+			//assert(shaderLoadSuccess);
+			hvk::render::shader::ShaderDefinition mipDef{
+				L"shaders\\generate_mips.hlsl",
+				L"main",
+				L"cs_6_3"
+			};
+			hvk::render::shader::ShaderService::Initialize()->CompileShader(mipDef, &mipByteCode);
 
 			D3D12_DESCRIPTOR_RANGE mipUavRange = {};
 			mipUavRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
@@ -66,7 +75,13 @@ namespace hvk
 			auto hr = render::CreateRootSignature(mDevice, { mipParam }, { bilinearSampler }, mRootSig);
 			assert(SUCCEEDED(hr));
 
-			hr = render::CreateComputePipelineState(mDevice, mRootSig, mipByteCode.data(), mipByteCode.size(), mPipelineState);
+			//hr = render::CreateComputePipelineState(mDevice, mRootSig, mipByteCode.data(), mipByteCode.size(), mPipelineState);
+			hr = render::CreateComputePipelineState(
+				mDevice, 
+				mRootSig,
+				reinterpret_cast<uint8_t*>(mipByteCode->GetBufferPointer()),
+				mipByteCode->GetBufferSize(),
+				mPipelineState);
 			assert(SUCCEEDED(hr));
 
 			// create constant buffer for mip generation

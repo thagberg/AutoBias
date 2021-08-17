@@ -14,6 +14,7 @@
 #include <DirectXMath.h>
 
 #include <Render.h>
+#include <ShaderService.h>
 #include <AutoBias.h>
 
 #define CAPTURE
@@ -166,12 +167,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     ComPtr<IDXGIFactory4> factory;
     ComPtr<IDXGIAdapter1> hardwareAdapter;
-    ComPtr<ID3D12Device> device;
+    ComPtr<ID3D12Device5> device;
     ComPtr<ID3D12CommandQueue> commandQueue;
     ComPtr<IDXGISwapChain3> swapchain;
     ComPtr<ID3D12DescriptorHeap> rtvHeap;
     ComPtr<ID3D12DescriptorHeap> uavHeap;
     ComPtr<ID3D12DescriptorHeap> samplerHeap;
+
+    std::shared_ptr<hvk::render::shader::ShaderService> shaderService = hvk::render::shader::ShaderService::Initialize();
 
     HRESULT hr = S_OK;
     hr = hvk::render::CreateFactory(factory);
@@ -189,11 +192,25 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         sizeof(Vertex), 
         vertexBuffer);
 
-    std::vector<uint8_t> vertexByteCode;
-    std::vector<uint8_t> pixelByteCode;
-    bool shaderLoadSuccess = hvk::bias::LoadShaderByteCode(L"shaders\\vertex.cso", vertexByteCode);
-    shaderLoadSuccess &= hvk::bias::LoadShaderByteCode(L"shaders\\pixel.cso", pixelByteCode);
-    assert(shaderLoadSuccess);
+    //std::vector<uint8_t> vertexByteCode;
+    //std::vector<uint8_t> pixelByteCode;
+    IDxcBlob* vertexByteCode;
+    IDxcBlob* pixelByteCode;
+    //bool shaderLoadSuccess = hvk::bias::LoadShaderByteCode(L"shaders\\vertex.cso", vertexByteCode);
+    //shaderLoadSuccess &= hvk::bias::LoadShaderByteCode(L"shaders\\pixel.cso", pixelByteCode);
+    //assert(shaderLoadSuccess);
+    hvk::render::shader::ShaderDefinition vertexShaderDef{
+        L"shaders\\vertex.hlsl",
+        L"main",
+        L"vs_6_3"
+    };
+    hvk::render::shader::ShaderDefinition pixelShaderDef{
+        L"shaders\\pixel.hlsl",
+        L"main",
+        L"ps_6_3"
+    };
+    hr = shaderService->CompileShader(vertexShaderDef, &vertexByteCode);
+    hr = shaderService->CompileShader(pixelShaderDef, &pixelByteCode);
 
     D3D12_STATIC_SAMPLER_DESC sampler = {};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
@@ -237,10 +254,19 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     vertexLayout.pInputElementDescs = vertexInputs;
 
     ComPtr<ID3D12PipelineState> pipelineState;
-    hr = hvk::render::CreateGraphicsPipelineState(device, vertexLayout, rootSignature, vertexByteCode.data(), vertexByteCode.size(), pixelByteCode.data(), pixelByteCode.size(), pipelineState);
+    //hr = hvk::render::CreateGraphicsPipelineState(device, vertexLayout, rootSignature, vertexByteCode.data(), vertexByteCode.size(), pixelByteCode.data(), pixelByteCode.size(), pipelineState);
+    hr = hvk::render::CreateGraphicsPipelineState(
+        device, 
+        vertexLayout, 
+        rootSignature, 
+        reinterpret_cast<uint8_t*>(vertexByteCode->GetBufferPointer()), 
+        vertexByteCode->GetBufferSize(),
+        reinterpret_cast<uint8_t*>(pixelByteCode->GetBufferPointer()), 
+        pixelByteCode->GetBufferSize(), 
+        pipelineState);
     assert(SUCCEEDED(hr));
-    vertexByteCode.clear();
-    pixelByteCode.clear();
+    //vertexByteCode.clear();
+    //pixelByteCode.clear();
 
     ComPtr<ID3D12CommandAllocator> commandAllocator;
     hr = hvk::render::CreateCommandAllocator(device, commandAllocator);
@@ -250,13 +276,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     hr = hvk::render::CreateCommandAllocator(device, singleUseAllocator);
     assert(SUCCEEDED(hr));
 
-    ComPtr<ID3D12GraphicsCommandList> commandList;
+    ComPtr<ID3D12GraphicsCommandList4> commandList;
     hr = hvk::render::CreateCommandList(device, commandAllocator, pipelineState, commandList);
     assert(SUCCEEDED(hr));
     commandList->Close();
 
 	// create single-use command list
-	ComPtr<ID3D12GraphicsCommandList> singleUse;
+	ComPtr<ID3D12GraphicsCommandList4> singleUse;
 	hr = hvk::render::CreateCommandList(device, singleUseAllocator, nullptr, singleUse);
 	assert(SUCCEEDED(hr));
     singleUse->Close();
@@ -463,7 +489,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 				previewSrc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
 
 				uint64_t requiredSize = 0;
-				device->GetCopyableFootprints(&previewTexture->GetDesc(), 0, 1, 0, &previewSrc.PlacedFootprint, nullptr, nullptr, &requiredSize);
+                const auto previewTextureDesc = previewTexture->GetDesc();
+				device->GetCopyableFootprints(&previewTextureDesc, 0, 1, 0, &previewSrc.PlacedFootprint, nullptr, nullptr, &requiredSize);
 
 				D3D12_RESOURCE_BARRIER cpyBarrier = {};
 				cpyBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;

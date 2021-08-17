@@ -1,3 +1,9 @@
 [submodule "ArduinoLED"]
 	path = ArduinoLED
 	url = git@github.com:thagberg/ArduinoLED.git
+[submodule "AutoBiasDevice"]
+	path = AutoBiasDevice
+	url = git@github.com:thagberg/AutoBiasDevice.git
+[submodule "d3d12render"]
+	path = d3d12render
+	url = git@github.com:thagberg/d3d12render.git

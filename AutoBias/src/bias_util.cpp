@@ -1,4 +1,5 @@
 #include "bias_util.h"
+#include <ShaderService.h>
 
 #if !defined(BIAS_UTIL)
 #define BIAS_UTIL
@@ -60,9 +61,16 @@ namespace hvk
 		{
 			HRESULT hr = S_OK;
 
-			std::vector<uint8_t> lutByteCode;
-			bool shaderLoadSuccess = LoadShaderByteCode(L"shaders\\lut_generator.cso", lutByteCode);
-			assert(shaderLoadSuccess);
+			//std::vector<uint8_t> lutByteCode;
+			IDxcBlob* lutByteCode;
+			//bool shaderLoadSuccess = LoadShaderByteCode(L"shaders\\lut_generator.cso", lutByteCode);
+			//assert(shaderLoadSuccess);
+			hvk::render::shader::ShaderDefinition lutDef{
+				L"shaders\\lut_generator.hlsl",
+				L"main",
+				L"cs_6_3"
+			};
+			hvk::render::shader::ShaderService::Initialize()->CompileShader(lutDef, &lutByteCode);
 
 			ComPtr<ID3D12DescriptorHeap> descriptorHeap;
 			D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
@@ -90,7 +98,13 @@ namespace hvk
 			assert(SUCCEEDED(hr));
 
 			ComPtr<ID3D12PipelineState> lutPipelineState;
-			hr = hvk::render::CreateComputePipelineState(device, rootSig, lutByteCode.data(), lutByteCode.size(), lutPipelineState);
+			//hr = hvk::render::CreateComputePipelineState(device, rootSig, lutByteCode.data(), lutByteCode.size(), lutPipelineState);
+			hr = hvk::render::CreateComputePipelineState(
+				device, 
+				rootSig, 
+				reinterpret_cast<uint8_t*>(lutByteCode->GetBufferPointer()),
+				lutByteCode->GetBufferSize(),
+				lutPipelineState);
 			assert(SUCCEEDED(hr));
 
 			D3D12_UNORDERED_ACCESS_VIEW_DESC lutDesc = {};

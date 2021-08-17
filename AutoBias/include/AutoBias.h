@@ -6,6 +6,8 @@
 #include <memory>
 #include <vector>
 
+#include <ShaderService.h>
+
 #include "generator/LEDGenerator.h"
 #include "generator/LuminanceGenerator.h"
 #include "generator/MipGenerator.h"
@@ -14,7 +16,10 @@ using namespace Microsoft::WRL;
 
 namespace hvk {
 	namespace control {
-		class ArduinoController;
+		//class ArduinoController;
+		class DeviceController;
+		class ArduinoDevice;
+		struct Color;
 	}
 
 }
@@ -28,7 +33,7 @@ namespace hvk
 		using Device = ComPtr<ID3D12Device>;
 		using Surface = ComPtr<ID3D12Resource>;
 		using LinearBuffer = ComPtr<ID3D12Resource>;
-		using CommandList = ComPtr<ID3D12GraphicsCommandList>;
+		using CommandList = ComPtr<ID3D12GraphicsCommandList4>;
 		using CommandAllocator = ComPtr<ID3D12CommandAllocator>;
 		using CommandQueue = ComPtr<ID3D12CommandQueue>;
 
@@ -65,12 +70,16 @@ namespace hvk
 			uint16_t mNumMips;
 			std::vector<int> mLEDMask;
 
-			std::vector<Color> mLEDWriteBuffer;
-			std::unique_ptr<control::ArduinoController> mArduinoController;
+			std::vector<hvk::control::Color> mLEDWriteBuffer;
+			//std::unique_ptr<control::ArduinoController> mArduinoController;
+			//std::unique_ptr<control::DeviceController<control::ArduinoDevice>> mArduinoDevice;
+			std::unique_ptr<control::DeviceController> mBiasDevice;
 
 			CommandQueue mCommandQueue;
 			CommandAllocator mCommandAllocator;
 			CommandList mCommandList;
+
+			static std::shared_ptr<hvk::render::shader::ShaderService> sShaderService;
 		};
 	}
 }
